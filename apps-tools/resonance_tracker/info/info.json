@@ -1,0 +1,6 @@
+{
+    "name": "Resonance Tracker",
+    "version": "VERSION",
+    "revision": "REVISION",
+    "description": "Raw coherent I/Q diagnostic tracker"
+}

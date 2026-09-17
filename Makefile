@@ -473,10 +473,11 @@ APP_LCRMETER_DIR    = apps-tools/lcr_meter
 APP_LA_PRO_DIR 		= apps-tools/la_pro
 APP_BA_PRO_DIR 		= apps-tools/ba_pro
 APP_IMP_ANAL_DIR 	= apps-tools/impedance_analyzer
+APP_RES_TRACKER_DIR = apps-tools/resonance_tracker
 
-.PHONY: apps-pro scopegenpro spectrumpro lcr_meter la_pro ba_pro lcr_meter impedance_analyzer
+.PHONY: apps-pro scopegenpro spectrumpro lcr_meter la_pro ba_pro lcr_meter impedance_analyzer resonance_tracker
 
-apps-tools: scopegenpro spectrumpro la_pro ba_pro lcr_meter impedance_analyzer
+apps-tools: scopegenpro spectrumpro la_pro ba_pro lcr_meter impedance_analyzer resonance_tracker
 
 scopegenpro: web-api api $(NGINX)
 	cmake -B$(abspath $(APP_SCOPEGENPRO_DIR)/build) -S$(abspath $(APP_SCOPEGENPRO_DIR)) $(CMAKEVAR)
@@ -501,6 +502,10 @@ ba_pro: web-api api $(NGINX)
 impedance_analyzer: web-api api $(NGINX)
 	cmake -B$(abspath $(APP_IMP_ANAL_DIR)/build) -S$(abspath $(APP_IMP_ANAL_DIR)) $(CMAKEVAR)
 	$(MAKE) -C $(APP_IMP_ANAL_DIR)/build install -j$(CPU_CORES)
+
+resonance_tracker: web-api api $(NGINX)
+	cmake -B$(abspath $(APP_RES_TRACKER_DIR)/build) -S$(abspath $(APP_RES_TRACKER_DIR)) $(CMAKEVAR)
+	$(MAKE) -C $(APP_RES_TRACKER_DIR)/build install -j$(CPU_CORES)
 
 
 ################################################################################
