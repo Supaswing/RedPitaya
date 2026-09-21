@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -96,6 +97,7 @@ void publish_sample(const RawIqSample& sample, double acquisition_rate)
 void acquisition_loop()
 {
     bool first_point = true;
+    bool was_running = false;
     auto last_measurement = std::chrono::steady_clock::now();
     auto last_publication = last_measurement;
     int publication_count = 0;
@@ -104,17 +106,25 @@ void acquisition_loop()
             std::lock_guard<std::mutex> lock(state_mutex);
             if (exit_requested) break;
         }
-        UpdateParams();
         if (!rt_run.Value()) {
-            send_state(kStopped, "");
+            if (was_running) send_state(kStopped, "");
+            was_running = false;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
+        if (!acquisition.isOpen()) {
+            rt_valid.SendValue(false);
+            rt_run.SendValue(false);
+            send_state(kError, "VNA register block is not open");
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        was_running = true;
         rt_busy.SendValue(true);
         RawIqSample sample;
         std::string error;
-        const auto start = std::chrono::steady_clock::now();
         const bool valid = acquisition.measure(static_cast<std::uint32_t>(rt_frequency.Value()), first_point, sample, error);
         first_point = false;
         const auto end = std::chrono::steady_clock::now();
@@ -125,6 +135,7 @@ void acquisition_loop()
             rt_valid.SendValue(false);
             send_state(kError, error);
             rt_run.SendValue(false);
+            was_running = false;
             continue;
         }
 
@@ -176,7 +187,10 @@ extern "C" int rp_app_exit(void)
 
 void UpdateParams(void)
 {
-    if (rt_run.IsNewValue()) rt_run.Update();
+    if (rt_run.IsNewValue()) {
+        rt_run.Update();
+        std::fprintf(stderr, "[resonance_tracker] RT_RUN=%d\n", rt_run.Value() ? 1 : 0);
+    }
     if (rt_frequency.IsNewValue()) rt_frequency.Update();
     if (rt_telemetry_ms.IsNewValue()) {
         rt_telemetry_ms.Update();
@@ -187,6 +201,8 @@ void UpdateParams(void)
 }
 
 void UpdateSignals(void) {}
+void UpdateBinarySignals(void) {}
 void PostUpdateSignals(void) {}
+void PostUpdateBinarySignals(void) {}
 void OnNewParams(void) { UpdateParams(); }
 void OnNewSignals(void) {}

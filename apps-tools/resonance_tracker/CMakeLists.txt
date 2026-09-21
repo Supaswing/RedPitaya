@@ -48,7 +48,7 @@ file(GLOB SOURCES "src/*.cpp")
 add_compile_options(-mcpu=cortex-a9 -mfpu=neon-fp16 -fPIC -Wall -Wextra)
 add_compile_definitions(ARCH_ARM VERSION=${VERSION} REVISION=${REVISION})
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
-target_link_libraries(${PROJECT_NAME} PRIVATE ${rp_libs})
+target_link_libraries(${PROJECT_NAME} PRIVATE cryptopp rp_sdk ${rp_libs})
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "")
 
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/css DESTINATION ${BUILD_PATH})

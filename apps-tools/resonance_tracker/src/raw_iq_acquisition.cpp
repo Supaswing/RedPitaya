@@ -1,8 +1,6 @@
 #include "raw_iq_acquisition.hpp"
 
-#include <cerrno>
 #include <cmath>
-#include <cstring>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -54,10 +52,6 @@ std::uint32_t phase_increment_to_frequency(std::uint32_t phase_increment)
     return static_cast<std::uint32_t>((scaled + (1ULL << 31U)) >> 32U);
 }
 
-std::string system_error(const char* operation)
-{
-    return std::string(operation) + ": " + std::strerror(errno);
-}
 }
 
 bool RawIqAcquisition::open()
