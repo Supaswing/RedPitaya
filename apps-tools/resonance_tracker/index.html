@@ -15,18 +15,42 @@
         <header class="topbar"><div><span class="kicker">RED PITAYA / VNA</span><h1>Resonance Tracker</h1><p class="placeholder">Milestone 1 diagnostic screen &mdash; tracker dashboard pending.</p></div><div id="connection" class="status">STARTING</div></header>
         <section class="controls">
             <label>Frequency [Hz]<input id="frequency" type="number" min="1" max="62500000" step="1" value="32000000"></label>
+            <label>Window shift<input id="window-shift" type="number" min="0" max="20" step="1" value="17"></label>
             <label>Web interval [ms]<input id="interval" type="number" min="10" max="1000" step="10" value="50"></label>
             <button id="run" class="run">RUN</button>
         </section>
         <section class="readout-grid">
             <article><span>State</span><strong id="state">STOPPED</strong><small id="error">No backend error</small></article>
-            <article><span>Sequence</span><strong id="sequence">0</strong><small id="validity">INVALID</small><small id="overflow">OVERFLOW: UNAVAILABLE</small></article>
+            <article><span>Sequence</span><strong id="sequence">0</strong><small id="validity">INVALID</small><small id="busy">IDLE</small><small id="overflow">OVERFLOW: UNAVAILABLE</small></article>
+            <article><span>Requested frequency</span><strong id="requested">32000000</strong><small>Hz</small></article>
             <article><span>Effective frequency</span><strong id="effective">-</strong><small>Hz</small></article>
             <article><span>Acquisition rate</span><strong id="rate">-</strong><small>Hz</small></article>
+            <article><span>Web publication rate</span><strong id="publication-rate">-</strong><small>Hz</small></article>
+            <article><span>Integration</span><strong id="integration-samples">131072</strong><small>samples = 2<sup id="effective-window-shift">17</sup></small><small><b id="integration-time">1048.576</b> &micro;s at 125 MHz</small></article>
         </section>
         <section class="channels">
             <article class="channel"><div class="channel-head"><h2>Incident</h2><span>IQ_INC</span></div><dl><dt>I</dt><dd id="inc-i">-</dd><dt>Q</dt><dd id="inc-q">-</dd><dt>Magnitude</dt><dd id="inc-mag">-</dd><dt>Phase</dt><dd id="inc-phase">-</dd></dl></article>
             <article class="channel"><div class="channel-head"><h2>Reflected</h2><span>IQ_REF</span></div><dl><dt>I</dt><dd id="ref-i">-</dd><dt>Q</dt><dd id="ref-q">-</dd><dt>Magnitude</dt><dd id="ref-mag">-</dd><dt>Phase</dt><dd id="ref-phase">-</dd></dl></article>
+        </section>
+        <section class="ratio-panel">
+            <div class="section-head"><div><h2>Complex reflection ratio R</h2><p>R = (I<sub>ref</sub> + jQ<sub>ref</sub>) / (I<sub>inc</sub> + jQ<sub>inc</sub>)</p></div><span id="ratio-validity">INVALID</span></div>
+            <div class="ratio-grid"><div><span>Real</span><strong id="ratio-real">-</strong></div><div><span>Imaginary</span><strong id="ratio-imag">-</strong></div><div><span>Magnitude</span><strong id="ratio-mag">-</strong></div><div><span>Phase</span><strong id="ratio-phase">-</strong><small>degrees</small></div></div>
+        </section>
+        <section class="statistics">
+            <div class="section-head"><div><h2>Rolling statistics</h2><p>Mean and sample standard deviation at the current frequency</p></div><span><b id="stats-count">0</b> / 128 acquisitions; <b id="ratio-stats-count">0</b> valid R</span></div>
+            <table>
+                <thead><tr><th>Quantity</th><th>Mean</th><th>Std. deviation</th></tr></thead>
+                <tbody>
+                    <tr><th>Incident I</th><td id="inc-i-mean">-</td><td id="inc-i-stddev">-</td></tr>
+                    <tr><th>Incident Q</th><td id="inc-q-mean">-</td><td id="inc-q-stddev">-</td></tr>
+                    <tr><th>Reflected I</th><td id="ref-i-mean">-</td><td id="ref-i-stddev">-</td></tr>
+                    <tr><th>Reflected Q</th><td id="ref-q-mean">-</td><td id="ref-q-stddev">-</td></tr>
+                    <tr><th>Real(R)</th><td id="ratio-real-mean">-</td><td id="ratio-real-stddev">-</td></tr>
+                    <tr><th>Imag(R)</th><td id="ratio-imag-mean">-</td><td id="ratio-imag-stddev">-</td></tr>
+                    <tr><th>|R|</th><td id="ratio-mag-mean">-</td><td id="ratio-mag-stddev">-</td></tr>
+                    <tr><th>Phase(mean R)</th><td id="ratio-mean-phase">-</td><td>degrees</td></tr>
+                </tbody>
+            </table>
         </section>
         <section class="history"><div class="section-head"><h2>Recent magnitude</h2><span>bounded to 128 points</span></div><canvas id="plot" width="900" height="220"></canvas></section>
     </main>

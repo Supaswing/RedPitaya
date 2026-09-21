@@ -97,6 +97,18 @@ bool RawIqAcquisition::isOpen() const
     return registers_ != nullptr;
 }
 
+bool RawIqAcquisition::setWindowShift(std::uint32_t window_shift, std::string& error)
+{
+    if (!write(kWindowShift, window_shift, error)) return false;
+    std::uint32_t applied_window_shift = 0;
+    if (!read(kWindowShift, applied_window_shift, error)) return false;
+    if (applied_window_shift != window_shift) {
+        error = "VNA window shift readback mismatch";
+        return false;
+    }
+    return true;
+}
+
 volatile std::uint32_t* RawIqAcquisition::register_address(std::uint32_t offset) const
 {
     if (registers_ == nullptr || offset % sizeof(std::uint32_t) != 0U || offset + sizeof(std::uint32_t) > kRegisterSpan)
@@ -139,7 +151,7 @@ bool RawIqAcquisition::measure(std::uint32_t frequency_hz, bool first_point, Raw
     if (!write(kPhaseIncrement, phase_increment, error) || !write(kControl, kRestart, error) ||
         !write(kControl, kRun, error)) return false;
     (void)first_point;
-    usleep(kSettlingUs * 1000U);
+    usleep(kSettlingUs);
     if (!write(kStatus, 0U, error) || !write(kVnaControl, kMeasurementStart, error)) return false;
 
     const std::uint64_t deadline = monotonic_ns() + static_cast<std::uint64_t>(kTimeoutUs) * 1000ULL;

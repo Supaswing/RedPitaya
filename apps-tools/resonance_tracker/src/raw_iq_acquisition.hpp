@@ -21,6 +21,7 @@ class RawIqAcquisition {
 public:
     bool open();
     void close();
+    bool setWindowShift(std::uint32_t window_shift, std::string& error);
     bool measure(std::uint32_t frequency_hz, bool first_point, RawIqSample& sample, std::string& error);
     bool isOpen() const;
 

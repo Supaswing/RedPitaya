@@ -19,10 +19,10 @@ The VNA register block is mapped at physical address `0x40700000` with a
 | `0x00` | CONTROL | R/W | `0x0f` restart, `0x0d` run, `0x0c` stop |
 | `0x04` | PHASE_INC | R/W | 32-bit DDS phase increment |
 | `0x08` | PHASE_OFFSET | R/W | phase offset, default `0` |
-| `0x0c` | PERIOD_COUNT | R/W | measurement period count, default `0` |
+| `0x0c` | PERIOD_COUNT | R/W | meaning not yet confirmed; held at default `0` |
 | `0x10` | AMPLITUDE | R/W | generator amplitude, default `0x0800` |
 | `0x14` | VNA_CONTROL | W | `0x01` starts one I/Q window |
-| `0x18` | WINDOW_SHIFT | R/W | integration/window shift, default `17` |
+| `0x18` | WINDOW_SHIFT | R/W | integration length exponent, default `17` |
 | `0x1c` | I_INC | R | signed 32-bit incident I result |
 | `0x20` | Q_INC | R | signed 32-bit incident Q result |
 | `0x24` | I_REF | R | signed 32-bit reflected I result |
@@ -33,6 +33,15 @@ The result registers are accumulator/window outputs in raw FPGA units. The
 external repository does not define volts, ADC counts, an accumulator count,
 or a normalization scale. The tracker therefore preserves them as raw signed
 integer units and computes magnitude and phase from those integers only.
+
+The user-confirmed integration length is `2^WINDOW_SHIFT` samples at 125 MHz.
+The app exposes the raw shift over the initial safe range 0-20, verifies register readback,
+and reports the corresponding sample count and integration time. Changing it
+invalidates the old sample and resets rolling statistics before acquisition
+continues. Because overflow status is unavailable, large shifts must be checked
+on hardware for accumulator saturation. Shift 20 is about 8.39 ms; larger
+values are not exposed because they exceed the current 10 ms measurement
+timeout before allowing for FPGA-ready latency.
 
 ## Sequencing and validity
 
@@ -49,10 +58,15 @@ The current external implementation treats ready as sufficient. The app reads
 all four values immediately after ready and never publishes a sample if ready
 or any register access fails.
 
-The app's `RT_SEQUENCE` is a monotonic software publication counter; it is not a
-hardware sequence number. `RT_OVERFLOW` is always false only because no overflow
-register exists; the UI displays this limitation as `UNAVAILABLE` in the
-contract status. `RT_VALID` means the complete four-register read completed
+`I_INC/Q_INC` and `I_REF/Q_REF` are the coherent incident/reference pair at the
+selected frequency. They do not identify logical sensors; future sensor
+selection is an independent hardware/control concern.
+
+The app's `RT_SEQUENCE` is a monotonic software counter for complete valid
+acquisitions; it is not a hardware sequence number and may advance by more than
+one between browser updates. `RT_OVERFLOW` is always false only because no
+overflow register exists; the UI displays this limitation as `UNAVAILABLE` in
+the contract status. `RT_VALID` means the complete four-register read completed
 after ready.
 
 ## Frequency and phase conventions
@@ -67,13 +81,13 @@ positive-Q convention.
 ## Limits and open questions
 
 The external code exposes a 100 us settling default and 10 ms measurement
- timeout, but no measured maximum update rate. The app publishes telemetry at
+timeout, but no measured maximum update rate. The app publishes telemetry at
 50 ms by default and acquisition remains in the backend thread.
 
-- `TODO(user)`: confirm that `I_INC/Q_INC` and `I_REF/Q_REF` are the intended
-  two logical sensors, or provide the sensor multiplexing/register contract.
-- `TODO(user)`: define accumulator width, sample count, overflow behavior, and
+- `TODO(user)`: define accumulator width, overflow behavior, and
   atomicity/latching requirements in the FPGA design.
+- `TODO(user)`: define `PERIOD_COUNT`; the app leaves it at zero until its
+  behavior and safe range are known.
 - `TODO(user)`: confirm target bitstream/version and whether `0x40700000` is
   reserved exclusively for this VNA block on STEMlab 125-14 Gen 2.
 - `TODO(user)`: provide a hardware test result for fixed-frequency monotonic
