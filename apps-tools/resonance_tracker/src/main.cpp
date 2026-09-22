@@ -122,6 +122,7 @@ CFloatSignal rt_baseline_curvature("RT_BASELINE_CURVATURE", kBaselineSignalSize,
 CFloatSignal rt_candidate_left("RT_CANDIDATE_LEFT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_right("RT_CANDIDATE_RIGHT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_score("RT_CANDIDATE_SCORE", 2, 0.0f);
+CFloatSignal rt_candidate_curvature_area("RT_CANDIDATE_CURVATURE_AREA", 2, 0.0f);
 CFloatSignal rt_candidate_selection_quality("RT_CANDIDATE_SELECTION_QUALITY", 2, 0.0f);
 CFloatSignal rt_candidate_is_inflection("RT_CANDIDATE_IS_INFLECTION", 2, 0.0f);
 CFloatSignal rt_refine_sensor_id("RT_REFINE_SENSOR_ID", kRefinementSignalSize, 0.0f);
@@ -203,6 +204,7 @@ struct TelemetrySnapshot {
     std::vector<float> candidate_left;
     std::vector<float> candidate_right;
     std::vector<float> candidate_score;
+    std::vector<float> candidate_curvature_area;
     std::vector<float> candidate_selection_quality;
     std::vector<float> candidate_is_inflection;
     std::vector<float> refine_sensor_id;
@@ -322,12 +324,14 @@ void publish_baseline(const BaselineResult& result)
     telemetry.candidate_left.clear();
     telemetry.candidate_right.clear();
     telemetry.candidate_score.clear();
+    telemetry.candidate_curvature_area.clear();
     telemetry.candidate_selection_quality.clear();
     telemetry.candidate_is_inflection.clear();
     for (const auto& candidate : result.candidates) {
         telemetry.candidate_left.push_back(static_cast<float>(candidate.left_frequency_hz));
         telemetry.candidate_right.push_back(static_cast<float>(candidate.right_frequency_hz));
         telemetry.candidate_score.push_back(static_cast<float>(candidate.score));
+        telemetry.candidate_curvature_area.push_back(static_cast<float>(candidate.curvature_area));
         telemetry.candidate_selection_quality.push_back(static_cast<float>(candidate.selection_quality));
         telemetry.candidate_is_inflection.push_back(candidate.from_inflection_pair ? 1.0f : 0.0f);
     }
@@ -516,6 +520,7 @@ void acquisition_loop()
                 telemetry.candidate_left.clear();
                 telemetry.candidate_right.clear();
                 telemetry.candidate_score.clear();
+                telemetry.candidate_curvature_area.clear();
                 telemetry.candidate_selection_quality.clear();
                 telemetry.candidate_is_inflection.clear();
                 telemetry.refine_sensor_id.clear();
@@ -884,6 +889,7 @@ void UpdateSignals(void)
     rt_candidate_left.Set(snapshot.candidate_left);
     rt_candidate_right.Set(snapshot.candidate_right);
     rt_candidate_score.Set(snapshot.candidate_score);
+    rt_candidate_curvature_area.Set(snapshot.candidate_curvature_area);
     rt_candidate_selection_quality.Set(snapshot.candidate_selection_quality);
     rt_candidate_is_inflection.Set(snapshot.candidate_is_inflection);
     rt_refine_sensor_id.Set(snapshot.refine_sensor_id);

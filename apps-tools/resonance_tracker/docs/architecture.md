@@ -125,17 +125,26 @@ Baseline signals:
 - `RT_BASELINE_SIGNAL_SEQUENCE` is a one-element signal and must equal
   `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
 - `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
-  `RT_CANDIDATE_SCORE`, `RT_CANDIDATE_SELECTION_QUALITY`, and
-  `RT_CANDIDATE_IS_INFLECTION`. Inflection and extrema candidates are accepted
-  only when their derived `frequency/FWHM` lies in the temporary expected range
-  50-150. The legacy curvature/prominence score is preserved, but accepted
-  hypotheses are ranked first by a local complex-model explained fraction,
-  penalized by the fitted center's displacement from the coarse candidate. The
-  calculation uses only the already acquired overview points, so no extra RF
-  acquisition is performed. For selected inflection-pair candidates, the browser
-  interpolates `RT_BASELINE_FILTERED_MAG` at the published left/right frequencies
-  to mark the exact selected curvature crossings. Extrema-fallback boundaries
-  are not labelled as inflection points.
+  `RT_CANDIDATE_SCORE`, `RT_CANDIDATE_CURVATURE_AREA`,
+  `RT_CANDIDATE_SELECTION_QUALITY`, and `RT_CANDIDATE_IS_INFLECTION`.
+  Inflection and extrema candidates are accepted only when their derived
+  `frequency/FWHM` lies in the temporary expected range 50-150. Inflection lobes
+  are ranked using balanced curvature area: twice the smaller of the positive
+  lobe area and the combined immediately adjacent negative-lobe area. This
+  suppresses isolated, near-zero crossing ripples and is the primary coarse
+  ordering metric. A local complex-model explained fraction, penalized by the
+  fitted center's displacement from the coarse candidate, is the second ordering
+  metric. The legacy curvature/prominence score is preserved as the final
+  tie-breaker. The coarse calculation uses only the already acquired overview
+  points.
+- Dense refinement tries candidates in ranked order. A candidate is accepted
+  only when its complex-model explained fraction is at least 0.20. Otherwise the
+  next candidate is refined, with at most three attempts per requested sensor.
+  Thus retries add bounded RF acquisitions only when earlier fits are poor.
+- For selected inflection-pair candidates, the browser interpolates
+  `RT_BASELINE_FILTERED_MAG` at the published left/right frequencies to mark the
+  exact selected curvature crossings. Extrema-fallback boundaries are not
+  labelled as inflection points.
 - `RT_REFINE_SENSOR_ID`, `RT_REFINE_FREQUENCY_HZ`, `RT_REFINE_RE`, and
   `RT_REFINE_IM` publish measured dense-refinement points.
 - `RT_MODEL_SENSOR_ID`, `RT_MODEL_FREQUENCY_HZ`, `RT_MODEL_RE`, and

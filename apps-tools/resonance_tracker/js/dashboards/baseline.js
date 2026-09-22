@@ -20,6 +20,7 @@
         const candidateLeft = values('RT_CANDIDATE_LEFT_HZ');
         const candidateRight = values('RT_CANDIDATE_RIGHT_HZ');
         const candidateScore = values('RT_CANDIDATE_SCORE');
+        const candidateCurvatureArea = values('RT_CANDIDATE_CURVATURE_AREA');
         const candidateSelectionQuality = values('RT_CANDIDATE_SELECTION_QUALITY');
         const candidateIsInflection = values('RT_CANDIDATE_IS_INFLECTION');
         const refineSensor = values('RT_REFINE_SENSOR_ID');
@@ -86,8 +87,8 @@
             context.strokeRect(x0, top, Math.max(1, x1 - x0), magnitudeBottom - top);
             context.setLineDash([]);
             context.fillStyle = context.strokeStyle;
-            context.fillText('C' + (index + 1) + ' curv ' +
-                Number(candidateScore[index] || 0).toExponential(2) + ' model ' +
+            context.fillText('C' + (index + 1) + ' area ' +
+                Number(candidateCurvatureArea[index] || 0).toExponential(2) + ' model ' +
                 Number(candidateSelectionQuality[index] || 0).toFixed(3), x0 + 4, top + 13);
         });
 

@@ -15,6 +15,8 @@ constexpr double kRefineFwhmHalfSpan = 1.0;
 constexpr double kSqrt3 = 1.7320508075688772;
 constexpr double kMinimumCandidateQ = 50.0;
 constexpr double kMaximumCandidateQ = 150.0;
+constexpr double kMinimumRefinedModelQuality = 0.20;
+constexpr std::size_t kCandidateAttemptsPerSensor = 3;
 constexpr double kEpsilon = 1e-18;
 
 using Complex = std::complex<double>;
@@ -97,6 +99,7 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
     std::vector<bool> used(source.size(), false);
     while (selected.size() < wanted) {
         std::size_t best = source.size();
+        double best_area = -1.0;
         double best_quality = -1.0;
         double best_score = -1.0;
         for (std::size_t index = 0; index < source.size(); ++index) {
@@ -112,9 +115,12 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
                 used[index] = true;
                 continue;
             }
-            if (source[index].selection_quality > best_quality ||
-                (source[index].selection_quality == best_quality && source[index].score > best_score)) {
+            if (source[index].curvature_area > best_area ||
+                (source[index].curvature_area == best_area && source[index].selection_quality > best_quality) ||
+                (source[index].curvature_area == best_area && source[index].selection_quality == best_quality &&
+                 source[index].score > best_score)) {
                 best = index;
+                best_area = source[index].curvature_area;
                 best_quality = source[index].selection_quality;
                 best_score = source[index].score;
             }
@@ -587,6 +593,7 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
     const double maximum_fwhm = kMaximumFwhmFraction * (stop - start);
     std::vector<ResonanceCandidate> pairs;
     bool inside = false;
+    std::size_t left_sample_index = curvature_edge;
     double left_index = 0.0;
     double integrated_score = 0.0;
     for (std::size_t i = curvature_edge; i + curvature_edge + 1 < overview.size(); ++i) {
@@ -594,6 +601,7 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
         const double right = curvature[i + 1];
         if (!inside && left <= 0.0 && right > 0.0) {
             left_index = i - left / (right - left);
+            left_sample_index = i;
             integrated_score = right;
             inside = true;
         } else if (inside) {
@@ -606,6 +614,19 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
                 candidate.right_frequency_hz = start + right_index * step;
                 candidate.frequency_hz = start + 0.5 * (left_index + right_index) * step;
                 candidate.fwhm_hz = kSqrt3 * (candidate.right_frequency_hz - candidate.left_frequency_hz);
+                double left_negative_area = 0.0;
+                for (std::size_t point = left_sample_index; point >= curvature_edge; --point) {
+                    if (curvature[point] > 0.0) break;
+                    left_negative_area -= curvature[point];
+                    if (point == curvature_edge) break;
+                }
+                double right_negative_area = 0.0;
+                for (std::size_t point = i + 1; point + curvature_edge < overview.size(); ++point) {
+                    if (curvature[point] > 0.0) break;
+                    right_negative_area -= curvature[point];
+                }
+                const double surrounding_negative_area = left_negative_area + right_negative_area;
+                candidate.curvature_area = 2.0 * std::min(integrated_score, surrounding_negative_area);
                 candidate.score = std::abs(smoothedAt(smoothed, 0.5 * (left_index + right_index), filter_radius) -
                                            0.5 * (smoothedAt(smoothed, left_index, filter_radius) +
                                                   smoothedAt(smoothed, right_index, filter_radius))) +
@@ -623,13 +644,6 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
     for (const auto& candidate : extrema) retainCandidate(hypotheses, candidate);
     for (auto& candidate : hypotheses) candidate.selection_quality = coarseModelQuality(overview, candidate);
     selectCandidates(hypotheses, wanted, selected);
-    if (selected.size() == wanted) {
-        std::sort(selected.begin(), selected.end(), [](const auto& left, const auto& right) {
-            return left.frequency_hz < right.frequency_hz;
-        });
-    } else {
-        selected.clear();
-    }
     return selected;
 }
 
@@ -662,19 +676,21 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
         if (progress) progress(BaselineStage::Overview, index + 1, config.overview_points);
     }
     if (progress) progress(BaselineStage::Finding, 0, config.sensor_count);
-    result.candidates = findCandidates(result.overview, config.sensor_count, config.filter_radius,
-                                       kMinimumCandidateQ, kMaximumCandidateQ,
-                                       &result.smoothed_magnitude_squared, &result.signed_curvature);
-    if (result.candidates.size() != config.sensor_count) {
+    const std::size_t candidate_limit = kCandidateAttemptsPerSensor * config.sensor_count;
+    const auto candidate_pool = findCandidates(result.overview, candidate_limit, config.filter_radius,
+                                               kMinimumCandidateQ, kMaximumCandidateQ,
+                                               &result.smoothed_magnitude_squared, &result.signed_curvature);
+    if (candidate_pool.size() < config.sensor_count) {
         result.complete = true;
         result.error = "required coarse resonance candidates not found";
         return result;
     }
 
-    for (std::size_t sensor = 0; sensor < config.sensor_count; ++sensor) {
-        const ResonanceCandidate& candidate = result.candidates[sensor];
+    std::size_t attempt = 0;
+    for (const auto& candidate : candidate_pool) {
+        if (result.resonances.size() == config.sensor_count || attempt == candidate_limit) break;
+        ++attempt;
         ResonanceEstimate estimate;
-        estimate.sensor_id = static_cast<std::uint32_t>(sensor + 1);
         estimate.candidate = candidate;
         estimate.frequency_hz = candidate.frequency_hz;
         estimate.fwhm_hz = candidate.fwhm_hz;
@@ -682,15 +698,7 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
         double half_span = std::max(3.0 * coarse_step, kRefineFwhmHalfSpan * candidate.fwhm_hz);
         double refine_start = std::max(static_cast<double>(config.start_frequency_hz), candidate.frequency_hz - half_span);
         double refine_stop = std::min(static_cast<double>(config.stop_frequency_hz), candidate.frequency_hz + half_span);
-        if (config.sensor_count == 2) {
-            const double midpoint = 0.5 * (result.candidates[0].frequency_hz + result.candidates[1].frequency_hz);
-            if (sensor == 0) refine_stop = std::min(refine_stop, midpoint);
-            else refine_start = std::max(refine_start, midpoint);
-        }
-        if (refine_stop - refine_start < 4.0 * coarse_step) {
-            result.error = "refinement window is too narrow";
-            return result;
-        }
+        if (refine_stop - refine_start < 4.0 * coarse_step) continue;
         const double refine_step = (refine_stop - refine_start) / (config.refine_points - 1);
         std::vector<std::vector<Complex>> replicates(config.refine_averages,
                                                       std::vector<Complex>(config.refine_points));
@@ -713,14 +721,28 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
             sum /= static_cast<double>(config.refine_averages);
             estimate.refinement.push_back({frequency, effective_frequency, sum.real(), sum.imag()});
             if (progress) progress(BaselineStage::Refining,
-                                   sensor * config.refine_points + point_index + 1,
-                                   config.sensor_count * config.refine_points);
+                                   (attempt - 1) * config.refine_points + point_index + 1,
+                                   candidate_limit * config.refine_points);
         }
-        if (!fitComplexModel(estimate.refinement, replicates, estimate) &&
-            !fitCurvatureFallback(estimate.refinement, replicates, estimate)) {
-            result.error = "complex model and curvature fallback failed";
-            return result;
-        }
+        if (!fitComplexModel(estimate.refinement, replicates, estimate) ||
+            !estimate.complex_model_valid || estimate.model_explained_fraction < kMinimumRefinedModelQuality)
+            continue;
+        result.resonances.push_back(std::move(estimate));
+    }
+    if (result.resonances.size() != config.sensor_count) {
+        result.complete = true;
+        result.error = "no candidate passed the refined model quality threshold";
+        return result;
+    }
+
+    std::sort(result.resonances.begin(), result.resonances.end(), [](const auto& left, const auto& right) {
+        return left.frequency_hz < right.frequency_hz;
+    });
+    result.candidates.clear();
+    for (std::size_t sensor = 0; sensor < result.resonances.size(); ++sensor) {
+        ResonanceEstimate& estimate = result.resonances[sensor];
+        estimate.sensor_id = static_cast<std::uint32_t>(sensor + 1);
+        result.candidates.push_back(estimate.candidate);
         for (int offset = -2; offset <= 2; ++offset) {
             ComplexMeasurement point;
             const auto frequency = roundedFrequency(estimate.frequency_hz + offset * estimate.spacing_hz);
@@ -730,7 +752,6 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
             if (progress) progress(BaselineStage::Template,
                                    sensor * 5 + static_cast<std::size_t>(offset + 3), config.sensor_count * 5);
         }
-        result.resonances.push_back(std::move(estimate));
     }
     result.complete = true;
     result.valid = true;
