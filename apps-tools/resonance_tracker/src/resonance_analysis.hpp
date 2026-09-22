@@ -34,6 +34,7 @@ struct BaselineConfig {
     std::uint32_t start_frequency_hz = 30000000;
     std::uint32_t stop_frequency_hz = 34000000;
     std::size_t overview_points = 101;
+    std::size_t filter_radius = 5;
     std::size_t coarse_averages = 3;
     std::size_t refine_points = 21;
     std::size_t refine_averages = 3;
@@ -93,6 +94,9 @@ public:
                            const BaselineProgress& progress = {}, const CancellationCheck& cancelled = {}) const;
     static std::vector<ResonanceCandidate> findCandidates(const std::vector<ComplexMeasurement>& overview,
                                                            std::size_t wanted,
+                                                           std::size_t filter_radius,
+                                                           double minimum_q,
+                                                           double maximum_q,
                                                            std::vector<double>* smoothed = nullptr,
                                                            std::vector<double>* curvature = nullptr);
 };

@@ -147,6 +147,7 @@
                 RT_BASELINE_STOP_HZ: {value: Number(byId('baseline-stop').value)},
                 RT_BASELINE_SENSOR_COUNT: {value: Number(byId('baseline-sensors').value)},
                 RT_BASELINE_OVERVIEW_POINTS: {value: Number(byId('baseline-overview-points').value)},
+                RT_BASELINE_FILTER_RADIUS: {value: Number(byId('baseline-filter-radius').value)},
                 RT_BASELINE_COARSE_AVERAGES: {value: Number(byId('baseline-coarse-averages').value)},
                 RT_BASELINE_REFINE_POINTS: {value: Number(byId('baseline-refine-points').value)},
                 RT_BASELINE_REFINE_AVERAGES: {value: Number(byId('baseline-refine-averages').value)}
@@ -157,6 +158,7 @@
         byId('baseline-stop').addEventListener('change', function () { sendConfiguration('baseline-stop', 'RT_BASELINE_STOP_HZ'); });
         byId('baseline-sensors').addEventListener('change', function () { sendConfiguration('baseline-sensors', 'RT_BASELINE_SENSOR_COUNT'); });
         byId('baseline-overview-points').addEventListener('change', function () { sendConfiguration('baseline-overview-points', 'RT_BASELINE_OVERVIEW_POINTS'); });
+        byId('baseline-filter-radius').addEventListener('change', function () { sendConfiguration('baseline-filter-radius', 'RT_BASELINE_FILTER_RADIUS'); });
         byId('baseline-coarse-averages').addEventListener('change', function () { sendConfiguration('baseline-coarse-averages', 'RT_BASELINE_COARSE_AVERAGES'); });
         byId('baseline-refine-points').addEventListener('change', function () { sendConfiguration('baseline-refine-points', 'RT_BASELINE_REFINE_POINTS'); });
         byId('baseline-refine-averages').addEventListener('change', function () { sendConfiguration('baseline-refine-averages', 'RT_BASELINE_REFINE_AVERAGES'); });
@@ -183,6 +185,7 @@
         byId('baseline-stop').disabled = active;
         byId('baseline-sensors').disabled = active;
         byId('baseline-overview-points').disabled = active;
+        byId('baseline-filter-radius').disabled = active;
         byId('baseline-coarse-averages').disabled = active;
         byId('baseline-refine-points').disabled = active;
         byId('baseline-refine-averages').disabled = active;
@@ -190,6 +193,7 @@
         synchronizeInput('baseline-stop', 'RT_BASELINE_STOP_HZ', 34000000);
         synchronizeInput('baseline-sensors', 'RT_BASELINE_SENSOR_COUNT', 1);
         synchronizeInput('baseline-overview-points', 'RT_BASELINE_OVERVIEW_POINTS', 101);
+        synchronizeInput('baseline-filter-radius', 'RT_BASELINE_FILTER_RADIUS', 5);
         synchronizeInput('baseline-coarse-averages', 'RT_BASELINE_COARSE_AVERAGES', 3);
         synchronizeInput('baseline-refine-points', 'RT_BASELINE_REFINE_POINTS', 21);
         synchronizeInput('baseline-refine-averages', 'RT_BASELINE_REFINE_AVERAGES', 3);

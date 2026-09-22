@@ -42,6 +42,7 @@ BaselineConfig config(std::size_t sensors)
     value.start_frequency_hz = 30000000;
     value.stop_frequency_hz = 34000000;
     value.overview_points = 101;
+    value.filter_radius = 5;
     value.coarse_averages = 3;
     value.refine_points = 21;
     value.refine_averages = 3;
@@ -122,6 +123,33 @@ void cancellationDoesNotComplete()
     assert(!result.valid);
     assert(result.error == "cancelled");
 }
+
+void configurableFilterRadiusAndQBounds()
+{
+    SyntheticSource source({{32150000.0, 130000.0, {-0.60, 0.18}}});
+    std::vector<ComplexMeasurement> overview;
+    std::string error;
+    for (std::uint32_t frequency = 30000000; frequency <= 34000000; frequency += 40000) {
+        ComplexMeasurement point;
+        assert(source.acquire(frequency, false, point, error));
+        overview.push_back(point);
+    }
+    const auto radius_three = BaselineAnalyzer::findCandidates(overview, 1, 3, 50.0, 150.0);
+    const auto radius_five = BaselineAnalyzer::findCandidates(overview, 1, 5, 50.0, 150.0);
+    assert(radius_three.size() == 1);
+    assert(radius_five.size() == 1);
+    assert(radius_three[0].frequency_hz / radius_three[0].fwhm_hz >= 50.0);
+    assert(radius_three[0].frequency_hz / radius_three[0].fwhm_hz <= 150.0);
+
+    SyntheticSource too_narrow({{32150000.0, 50000.0, {-0.60, 0.18}}});
+    overview.clear();
+    for (std::uint32_t frequency = 30000000; frequency <= 34000000; frequency += 10000) {
+        ComplexMeasurement point;
+        assert(too_narrow.acquire(frequency, false, point, error));
+        overview.push_back(point);
+    }
+    assert(BaselineAnalyzer::findCandidates(overview, 1, 3, 50.0, 150.0).empty());
+}
 }
 
 int main()
@@ -130,5 +158,6 @@ int main()
     multipleCandidates();
     missingResonance();
     cancellationDoesNotComplete();
+    configurableFilterRadiusAndQBounds();
     return 0;
 }

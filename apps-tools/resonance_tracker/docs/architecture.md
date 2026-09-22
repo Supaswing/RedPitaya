@@ -95,10 +95,13 @@ Commands:
   `RT_BASELINE_SENSOR_COUNT`: requested scan configuration. Until physical
   sensor multiplexing is defined, this count means the number of non-overlapping
   resonances to select; IDs are assigned in increasing-frequency order.
-- `RT_BASELINE_OVERVIEW_POINTS` (15-501),
+- `RT_BASELINE_OVERVIEW_POINTS` (15-501), `RT_BASELINE_FILTER_RADIUS` (1-25),
   `RT_BASELINE_COARSE_AVERAGES` (1-32), `RT_BASELINE_REFINE_POINTS` (5-101),
   and `RT_BASELINE_REFINE_AVERAGES` (1-32) configure the overview and dense
-  refinement acquisitions. Averaging is coherent complex averaging.
+  refinement acquisitions. Averaging is coherent complex averaging. Filter
+  radius is measured in coarse-scan points and defines a centered `2r+1`
+  quadratic Savitzky-Golay window; a run requires at least `2r+5` overview
+  points.
 
 Baseline/result scalars:
 
@@ -118,7 +121,9 @@ Baseline signals:
 - `RT_BASELINE_SIGNAL_SEQUENCE` is a one-element signal and must equal
   `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
 - `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
-  `RT_CANDIDATE_SCORE`.
+  `RT_CANDIDATE_SCORE`. Inflection and extrema candidates are accepted only
+  when their derived `frequency/FWHM` lies in the temporary expected range
+  50-150.
 - `RT_REFINE_SENSOR_ID`, `RT_REFINE_FREQUENCY_HZ`, `RT_REFINE_RE`, and
   `RT_REFINE_IM` publish measured dense-refinement points.
 - `RT_MODEL_SENSOR_ID`, `RT_MODEL_FREQUENCY_HZ`, `RT_MODEL_RE`, and

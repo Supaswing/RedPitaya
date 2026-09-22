@@ -8,14 +8,13 @@
 #include <utility>
 
 namespace {
-constexpr std::size_t kSgRadius = 5;
-constexpr std::size_t kCurvatureEdge = kSgRadius + 1;
 constexpr std::size_t kMaxCandidates = 12;
 constexpr std::size_t kExtremaSearchSteps = 20;
-constexpr double kMinimumFwhmSteps = 4.0;
 constexpr double kMaximumFwhmFraction = 0.40;
 constexpr double kRefineFwhmHalfSpan = 1.0;
 constexpr double kSqrt3 = 1.7320508075688772;
+constexpr double kMinimumCandidateQ = 50.0;
+constexpr double kMaximumCandidateQ = 150.0;
 constexpr double kEpsilon = 1e-18;
 
 using Complex = std::complex<double>;
@@ -123,10 +122,17 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
     }
 }
 
-double smoothedAt(const std::vector<double>& smoothed, double index)
+bool hasExpectedQ(const ResonanceCandidate& candidate, double minimum_q, double maximum_q)
 {
-    if (index <= static_cast<double>(kSgRadius)) return smoothed[kSgRadius];
-    const std::size_t last = smoothed.size() - kSgRadius - 1;
+    if (candidate.frequency_hz <= 0.0 || candidate.fwhm_hz <= 0.0) return false;
+    const double q = candidate.frequency_hz / candidate.fwhm_hz;
+    return q >= minimum_q && q <= maximum_q;
+}
+
+double smoothedAt(const std::vector<double>& smoothed, double index, std::size_t filter_radius)
+{
+    if (index <= static_cast<double>(filter_radius)) return smoothed[filter_radius];
+    const std::size_t last = smoothed.size() - filter_radius - 1;
     if (index >= static_cast<double>(last)) return smoothed[last];
     const auto left = static_cast<std::size_t>(index);
     const double fraction = index - static_cast<double>(left);
@@ -134,11 +140,12 @@ double smoothedAt(const std::vector<double>& smoothed, double index)
 }
 
 std::vector<ResonanceCandidate> extremaCandidates(const std::vector<double>& smoothed, double start,
-                                                   double step, double minimum_fwhm, double maximum_fwhm)
+                                                   double step, double maximum_fwhm, std::size_t filter_radius,
+                                                   double minimum_q, double maximum_q)
 {
     std::vector<ResonanceCandidate> candidates;
-    const std::size_t first = kSgRadius + 1;
-    const std::size_t last = smoothed.size() - kSgRadius - 2;
+    const std::size_t first = filter_radius + 1;
+    const std::size_t last = smoothed.size() - filter_radius - 2;
     for (std::size_t i = first; i <= last; ++i) {
         const double previous = smoothed[i - 1];
         const double center = smoothed[i];
@@ -146,8 +153,9 @@ std::vector<ResonanceCandidate> extremaCandidates(const std::vector<double>& smo
         const bool minimum = center < previous && center <= next;
         const bool maximum = center > previous && center >= next;
         if (!minimum && !maximum) continue;
-        const std::size_t search_first = std::max(kSgRadius, i > kExtremaSearchSteps ? i - kExtremaSearchSteps : 0U);
-        const std::size_t search_last = std::min(smoothed.size() - kSgRadius - 1, i + kExtremaSearchSteps);
+        const std::size_t search_first =
+            std::max(filter_radius, i > kExtremaSearchSteps ? i - kExtremaSearchSteps : 0U);
+        const std::size_t search_last = std::min(smoothed.size() - filter_radius - 1, i + kExtremaSearchSteps);
         double left_background = center;
         double right_background = center;
         for (std::size_t j = search_first; j < i; ++j)
@@ -195,7 +203,7 @@ std::vector<ResonanceCandidate> extremaCandidates(const std::vector<double>& smo
         candidate.frequency_hz = start + center_index * step;
         candidate.fwhm_hz = candidate.right_frequency_hz - candidate.left_frequency_hz;
         candidate.score = prominence;
-        if (candidate.fwhm_hz >= minimum_fwhm && candidate.fwhm_hz <= maximum_fwhm)
+        if (candidate.fwhm_hz <= maximum_fwhm && hasExpectedQ(candidate, minimum_q, maximum_q))
             retainCandidate(candidates, candidate);
     }
     return candidates;
@@ -505,22 +513,42 @@ bool ReplayMeasurementSource::acquire(std::uint32_t frequency_hz, bool, ComplexM
 
 std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vector<ComplexMeasurement>& overview,
                                                                  std::size_t wanted,
+                                                                 std::size_t filter_radius,
+                                                                 double minimum_q,
+                                                                 double maximum_q,
                                                                  std::vector<double>* smoothed_output,
                                                                  std::vector<double>* curvature_output)
 {
     std::vector<ResonanceCandidate> selected;
-    if (overview.size() < 2 * kCurvatureEdge + 3 || wanted == 0) return selected;
+    const std::size_t curvature_edge = filter_radius + 1;
+    if (filter_radius == 0 || overview.size() < 2 * curvature_edge + 3 || wanted == 0 ||
+        minimum_q <= 0.0 || maximum_q < minimum_q)
+        return selected;
     std::vector<double> magnitude(overview.size());
     std::vector<double> smoothed(overview.size(), 0.0);
     std::vector<double> curvature(overview.size(), 0.0);
     for (std::size_t i = 0; i < overview.size(); ++i) magnitude[i] = magnitudeSquared(overview[i]);
-    for (std::size_t i = kSgRadius; i + kSgRadius < overview.size(); ++i) {
-        smoothed[i] = (-36.0 * magnitude[i - 5] + 9.0 * magnitude[i - 4] + 44.0 * magnitude[i - 3] +
-                       69.0 * magnitude[i - 2] + 84.0 * magnitude[i - 1] + 89.0 * magnitude[i] +
-                       84.0 * magnitude[i + 1] + 69.0 * magnitude[i + 2] + 44.0 * magnitude[i + 3] +
-                       9.0 * magnitude[i + 4] - 36.0 * magnitude[i + 5]) / 429.0;
+    // Center coefficient of a least-squares quadratic fit over 2*radius+1
+    // equally spaced samples. The symmetric kernel has zero group delay.
+    double sum_x2 = 0.0;
+    double sum_x4 = 0.0;
+    for (std::size_t offset = 1; offset <= filter_radius; ++offset) {
+        const double x2 = static_cast<double>(offset * offset);
+        sum_x2 += 2.0 * x2;
+        sum_x4 += 2.0 * x2 * x2;
     }
-    for (std::size_t i = kCurvatureEdge; i + kCurvatureEdge < overview.size(); ++i)
+    const double count = static_cast<double>(2 * filter_radius + 1);
+    const double denominator = count * sum_x4 - sum_x2 * sum_x2;
+    if (denominator <= kEpsilon) return selected;
+    for (std::size_t i = filter_radius; i + filter_radius < overview.size(); ++i) {
+        for (std::ptrdiff_t offset = -static_cast<std::ptrdiff_t>(filter_radius);
+             offset <= static_cast<std::ptrdiff_t>(filter_radius); ++offset) {
+            const double x2 = static_cast<double>(offset * offset);
+            const double coefficient = (sum_x4 - sum_x2 * x2) / denominator;
+            smoothed[i] += coefficient * magnitude[static_cast<std::size_t>(static_cast<std::ptrdiff_t>(i) + offset)];
+        }
+    }
+    for (std::size_t i = curvature_edge; i + curvature_edge < overview.size(); ++i)
         curvature[i] = smoothed[i - 1] - 2.0 * smoothed[i] + smoothed[i + 1];
     if (smoothed_output) *smoothed_output = smoothed;
     if (curvature_output) *curvature_output = curvature;
@@ -528,13 +556,12 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
     const double start = overview.front().requested_frequency_hz;
     const double stop = overview.back().requested_frequency_hz;
     const double step = (stop - start) / (overview.size() - 1);
-    const double minimum_fwhm = kMinimumFwhmSteps * step;
     const double maximum_fwhm = kMaximumFwhmFraction * (stop - start);
     std::vector<ResonanceCandidate> pairs;
     bool inside = false;
     double left_index = 0.0;
     double integrated_score = 0.0;
-    for (std::size_t i = kCurvatureEdge; i + kCurvatureEdge + 1 < overview.size(); ++i) {
+    for (std::size_t i = curvature_edge; i + curvature_edge + 1 < overview.size(); ++i) {
         const double left = curvature[i];
         const double right = curvature[i + 1];
         if (!inside && left <= 0.0 && right > 0.0) {
@@ -550,10 +577,12 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
                 candidate.right_frequency_hz = start + right_index * step;
                 candidate.frequency_hz = start + 0.5 * (left_index + right_index) * step;
                 candidate.fwhm_hz = kSqrt3 * (candidate.right_frequency_hz - candidate.left_frequency_hz);
-                candidate.score = std::abs(smoothedAt(smoothed, 0.5 * (left_index + right_index)) -
-                                           0.5 * (smoothedAt(smoothed, left_index) + smoothedAt(smoothed, right_index))) +
+                candidate.score = std::abs(smoothedAt(smoothed, 0.5 * (left_index + right_index), filter_radius) -
+                                           0.5 * (smoothedAt(smoothed, left_index, filter_radius) +
+                                                  smoothedAt(smoothed, right_index, filter_radius))) +
                                   integrated_score;
-                if (candidate.fwhm_hz >= minimum_fwhm && candidate.fwhm_hz <= maximum_fwhm && candidate.score > 0.0)
+                if (candidate.fwhm_hz <= maximum_fwhm && candidate.score > 0.0 &&
+                    hasExpectedQ(candidate, minimum_q, maximum_q))
                     retainCandidate(pairs, candidate);
                 inside = false;
             }
@@ -561,7 +590,8 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
     }
     selectCandidates(pairs, wanted, selected);
     if (selected.size() < wanted) {
-        const auto extrema = extremaCandidates(smoothed, start, step, minimum_fwhm, maximum_fwhm);
+        const auto extrema =
+            extremaCandidates(smoothed, start, step, maximum_fwhm, filter_radius, minimum_q, maximum_q);
         selectCandidates(extrema, wanted, selected);
     }
     if (selected.size() == wanted) {
@@ -581,6 +611,10 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
     BaselineResult result;
     result.sequence = sequence;
     result.config = config;
+    if (config.filter_radius == 0 || config.overview_points < 2 * config.filter_radius + 5) {
+        result.error = "filter radius requires at least 2r+5 overview points";
+        return result;
+    }
     if (config.start_frequency_hz >= config.stop_frequency_hz || config.overview_points < 15 ||
         config.coarse_averages == 0 || config.refine_points < 5 || config.refine_averages == 0 ||
         config.sensor_count == 0 || config.sensor_count > 2) {
@@ -599,8 +633,9 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
         if (progress) progress(BaselineStage::Overview, index + 1, config.overview_points);
     }
     if (progress) progress(BaselineStage::Finding, 0, config.sensor_count);
-    result.candidates = findCandidates(result.overview, config.sensor_count, &result.smoothed_magnitude_squared,
-                                       &result.signed_curvature);
+    result.candidates = findCandidates(result.overview, config.sensor_count, config.filter_radius,
+                                       kMinimumCandidateQ, kMaximumCandidateQ,
+                                       &result.smoothed_magnitude_squared, &result.signed_curvature);
     if (result.candidates.size() != config.sensor_count) {
         result.complete = true;
         result.error = "required coarse resonance candidates not found";

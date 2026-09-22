@@ -59,6 +59,7 @@ CIntParameter rt_baseline_stop("RT_BASELINE_STOP_HZ", CBaseParameter::RW, 340000
 CIntParameter rt_baseline_sensors("RT_BASELINE_SENSOR_COUNT", CBaseParameter::RW, 1, 0, 1, 2);
 CIntParameter rt_baseline_overview_points("RT_BASELINE_OVERVIEW_POINTS", CBaseParameter::RW, 101, 0, 15,
                                           kBaselineSignalSize);
+CIntParameter rt_baseline_filter_radius("RT_BASELINE_FILTER_RADIUS", CBaseParameter::RW, 5, 0, 1, 25);
 CIntParameter rt_baseline_coarse_averages("RT_BASELINE_COARSE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
 CIntParameter rt_baseline_refine_points("RT_BASELINE_REFINE_POINTS", CBaseParameter::RW, 21, 0, 5, 101);
 CIntParameter rt_baseline_refine_averages("RT_BASELINE_REFINE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
@@ -226,6 +227,7 @@ std::atomic<int> baseline_start_hz{30000000};
 std::atomic<int> baseline_stop_hz{34000000};
 std::atomic<int> baseline_sensor_count{1};
 std::atomic<int> baseline_overview_points{101};
+std::atomic<int> baseline_filter_radius{5};
 std::atomic<int> baseline_coarse_averages{3};
 std::atomic<int> baseline_refine_points{21};
 std::atomic<int> baseline_refine_averages{3};
@@ -509,6 +511,7 @@ void acquisition_loop()
             config.stop_frequency_hz = static_cast<std::uint32_t>(baseline_stop_hz.load());
             config.sensor_count = static_cast<std::size_t>(baseline_sensor_count.load());
             config.overview_points = static_cast<std::size_t>(baseline_overview_points.load());
+            config.filter_radius = static_cast<std::size_t>(baseline_filter_radius.load());
             config.coarse_averages = static_cast<std::size_t>(baseline_coarse_averages.load());
             config.refine_points = static_cast<std::size_t>(baseline_refine_points.load());
             config.refine_averages = static_cast<std::size_t>(baseline_refine_averages.load());
@@ -725,6 +728,7 @@ extern "C" int rp_app_init(void)
     baseline_stop_hz.store(34000000);
     baseline_sensor_count.store(1);
     baseline_overview_points.store(101);
+    baseline_filter_radius.store(5);
     baseline_coarse_averages.store(3);
     baseline_refine_points.store(21);
     baseline_refine_averages.store(3);
@@ -774,6 +778,7 @@ void UpdateParams(void)
     rt_baseline_stop.SendValue(baseline_stop_hz.load());
     rt_baseline_sensors.SendValue(baseline_sensor_count.load());
     rt_baseline_overview_points.SendValue(baseline_overview_points.load());
+    rt_baseline_filter_radius.SendValue(baseline_filter_radius.load());
     rt_baseline_coarse_averages.SendValue(baseline_coarse_averages.load());
     rt_baseline_refine_points.SendValue(baseline_refine_points.load());
     rt_baseline_refine_averages.SendValue(baseline_refine_averages.load());
@@ -915,6 +920,10 @@ void OnNewParams(void)
     if (rt_baseline_overview_points.IsNewValue()) {
         rt_baseline_overview_points.Update();
         baseline_overview_points.store(rt_baseline_overview_points.Value());
+    }
+    if (rt_baseline_filter_radius.IsNewValue()) {
+        rt_baseline_filter_radius.Update();
+        baseline_filter_radius.store(rt_baseline_filter_radius.Value());
     }
     if (rt_baseline_coarse_averages.IsNewValue()) {
         rt_baseline_coarse_averages.Update();
