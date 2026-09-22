@@ -134,6 +134,18 @@ is bounded to 128 points. Baseline has exactly 101 overview points and
 diagnostics exactly five points. Hidden dashboards receive no render calls and
 own no timers.
 
+`RT_WINDOW_SHIFT` is global hardware acquisition configuration. In `RAW_IQ`, a
+change is applied and read back before the next published measurement and resets
+rolling statistics. In an idle or baseline-ready state, it remains requested
+configuration until the next raw, baseline, or diagnostics operation starts.
+The control is locked during baseline, resonance-finding, and diagnostics so a
+single result sequence cannot contain mixed integration lengths.
+
+`RT_TELEMETRY_MS` applies immediately to parameter and signal publication for
+all dashboards. It also bounds raw-history point publication, but it does not
+pace coherent FPGA measurements, baseline points, refinement averages, or
+diagnostics acquisition.
+
 ## Scope boundary
 
 The `SEARCHING`, `TRACKING`, `DEGRADED`, and `RELOCKING` values reserve the

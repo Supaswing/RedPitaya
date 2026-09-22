@@ -45,7 +45,7 @@ include_directories(${include_paths})
 link_directories(${libs_paths})
 
 file(GLOB SOURCES "src/*.cpp")
-add_compile_options(-mcpu=cortex-a9 -mfpu=neon-fp16 -fPIC -Wall -Wextra)
+add_compile_options(-mcpu=cortex-a9 -mfpu=neon-fp16 -fPIC -Wall -Wextra -Wno-psabi)
 add_compile_definitions(ARCH_ARM VERSION=${VERSION} REVISION=${REVISION})
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE rp_sdk cryptopp ${rp_libs})

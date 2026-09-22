@@ -2,6 +2,7 @@
     const byId = function (id) { return document.getElementById(id); };
     let controlsBound = false;
     let lastSequence = -1;
+    const pendingConfiguration = {};
 
     function values(name) {
         const signal = tracker.store.signals[name];
@@ -40,6 +41,23 @@
         byId(id).textContent = valid && Number.isFinite(value) ? value.toFixed(digits) : '-';
     }
 
+    function sendConfiguration(inputId, parameterName) {
+        const value = Number(byId(inputId).value);
+        pendingConfiguration[parameterName] = value;
+        const message = {};
+        message[parameterName] = {value: value};
+        if (!tracker.transport.send(message)) delete pendingConfiguration[parameterName];
+    }
+
+    function synchronizeInput(inputId, parameterName, fallback) {
+        const backendValue = Number(tracker.parameter(parameterName, fallback));
+        if (Object.prototype.hasOwnProperty.call(pendingConfiguration, parameterName)) {
+            if (backendValue === pendingConfiguration[parameterName]) delete pendingConfiguration[parameterName];
+            else return;
+        }
+        if (document.activeElement !== byId(inputId)) byId(inputId).value = backendValue;
+    }
+
     function bindControls() {
         if (controlsBound) return;
         controlsBound = true;
@@ -51,6 +69,9 @@
             });
         });
         byId('baseline-cancel-button').addEventListener('click', function () { tracker.sendCommand(2); });
+        byId('baseline-start').addEventListener('change', function () { sendConfiguration('baseline-start', 'RT_BASELINE_START_HZ'); });
+        byId('baseline-stop').addEventListener('change', function () { sendConfiguration('baseline-stop', 'RT_BASELINE_STOP_HZ'); });
+        byId('baseline-sensors').addEventListener('change', function () { sendConfiguration('baseline-sensors', 'RT_BASELINE_SENSOR_COUNT'); });
     }
 
     function update() {
@@ -65,9 +86,12 @@
         byId('baseline-progress').textContent = progress.toFixed(1);
         byId('baseline-start-button').disabled = active || state === 5;
         byId('baseline-cancel-button').disabled = !active;
-        if (document.activeElement !== byId('baseline-start')) byId('baseline-start').value = tracker.parameter('RT_BASELINE_START_HZ', 30000000);
-        if (document.activeElement !== byId('baseline-stop')) byId('baseline-stop').value = tracker.parameter('RT_BASELINE_STOP_HZ', 34000000);
-        if (document.activeElement !== byId('baseline-sensors')) byId('baseline-sensors').value = tracker.parameter('RT_BASELINE_SENSOR_COUNT', 1);
+        byId('baseline-start').disabled = active;
+        byId('baseline-stop').disabled = active;
+        byId('baseline-sensors').disabled = active;
+        synchronizeInput('baseline-start', 'RT_BASELINE_START_HZ', 30000000);
+        synchronizeInput('baseline-stop', 'RT_BASELINE_STOP_HZ', 34000000);
+        synchronizeInput('baseline-sensors', 'RT_BASELINE_SENSOR_COUNT', 1);
         format('resonance-frequency', 'RT_RESONANCE_FREQUENCY_HZ', 1, valid);
         format('resonance-q', 'RT_RESONANCE_Q', 3, valid);
         format('resonance-fwhm', 'RT_RESONANCE_FWHM_HZ', 1, valid);
