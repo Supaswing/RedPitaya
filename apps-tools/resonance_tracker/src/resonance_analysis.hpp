@@ -48,6 +48,7 @@ struct ResonanceCandidate {
     double frequency_hz = 0.0;
     double fwhm_hz = 0.0;
     double score = 0.0;
+    double selection_quality = 0.0;
 };
 
 struct ResonanceEstimate {

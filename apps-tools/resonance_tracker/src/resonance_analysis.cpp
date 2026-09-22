@@ -97,6 +97,7 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
     std::vector<bool> used(source.size(), false);
     while (selected.size() < wanted) {
         std::size_t best = source.size();
+        double best_quality = -1.0;
         double best_score = -1.0;
         for (std::size_t index = 0; index < source.size(); ++index) {
             if (used[index]) continue;
@@ -111,8 +112,10 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
                 used[index] = true;
                 continue;
             }
-            if (source[index].score > best_score) {
+            if (source[index].selection_quality > best_quality ||
+                (source[index].selection_quality == best_quality && source[index].score > best_score)) {
                 best = index;
+                best_quality = source[index].selection_quality;
                 best_score = source[index].score;
             }
         }
@@ -385,6 +388,31 @@ bool fitComplexModel(const std::vector<ComplexMeasurement>& points, const std::v
     return true;
 }
 
+double coarseModelQuality(const std::vector<ComplexMeasurement>& overview, const ResonanceCandidate& candidate)
+{
+    if (overview.size() < 9 || candidate.fwhm_hz <= 0.0) return 0.0;
+    const double step = static_cast<double>(overview.back().requested_frequency_hz -
+                                            overview.front().requested_frequency_hz) /
+                        static_cast<double>(overview.size() - 1);
+    const double half_span = std::max(1.5 * candidate.fwhm_hz, 6.0 * step);
+    const double lower = candidate.frequency_hz - half_span;
+    const double upper = candidate.frequency_hz + half_span;
+    std::vector<ComplexMeasurement> local;
+    for (const auto& point : overview) {
+        if (point.requested_frequency_hz >= lower && point.requested_frequency_hz <= upper)
+            local.push_back(point);
+    }
+    if (local.size() < 13) return 0.0;
+    ResonanceEstimate estimate;
+    estimate.frequency_hz = candidate.frequency_hz;
+    estimate.fwhm_hz = candidate.fwhm_hz;
+    if (!fitComplexModel(local, {}, estimate) || !estimate.complex_model_valid) return 0.0;
+    const double center_displacement = std::abs(estimate.frequency_hz - candidate.frequency_hz) /
+                                       candidate.fwhm_hz;
+    return std::clamp(estimate.model_explained_fraction, 0.0, 1.0) /
+           (1.0 + center_displacement * center_displacement);
+}
+
 double complexCurvature(const std::vector<Complex>& data, std::size_t index)
 {
     return std::norm(data[index - 1] - 2.0 * data[index] + data[index + 1]);
@@ -589,12 +617,12 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
             }
         }
     }
-    selectCandidates(pairs, wanted, selected);
-    if (selected.size() < wanted) {
-        const auto extrema =
-            extremaCandidates(smoothed, start, step, maximum_fwhm, filter_radius, minimum_q, maximum_q);
-        selectCandidates(extrema, wanted, selected);
-    }
+    const auto extrema =
+        extremaCandidates(smoothed, start, step, maximum_fwhm, filter_radius, minimum_q, maximum_q);
+    std::vector<ResonanceCandidate> hypotheses = pairs;
+    for (const auto& candidate : extrema) retainCandidate(hypotheses, candidate);
+    for (auto& candidate : hypotheses) candidate.selection_quality = coarseModelQuality(overview, candidate);
+    selectCandidates(hypotheses, wanted, selected);
     if (selected.size() == wanted) {
         std::sort(selected.begin(), selected.end(), [](const auto& left, const auto& right) {
             return left.frequency_hz < right.frequency_hz;

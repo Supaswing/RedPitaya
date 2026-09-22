@@ -125,12 +125,17 @@ Baseline signals:
 - `RT_BASELINE_SIGNAL_SEQUENCE` is a one-element signal and must equal
   `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
 - `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
-  `RT_CANDIDATE_SCORE`, and `RT_CANDIDATE_IS_INFLECTION`. Inflection and extrema
-  candidates are accepted only when their derived `frequency/FWHM` lies in the
-  temporary expected range 50-150. For selected inflection-pair candidates, the
-  browser interpolates `RT_BASELINE_FILTERED_MAG` at the published left/right
-  frequencies to mark the exact selected curvature crossings. Extrema-fallback
-  boundaries are not labelled as inflection points.
+  `RT_CANDIDATE_SCORE`, `RT_CANDIDATE_SELECTION_QUALITY`, and
+  `RT_CANDIDATE_IS_INFLECTION`. Inflection and extrema candidates are accepted
+  only when their derived `frequency/FWHM` lies in the temporary expected range
+  50-150. The legacy curvature/prominence score is preserved, but accepted
+  hypotheses are ranked first by a local complex-model explained fraction,
+  penalized by the fitted center's displacement from the coarse candidate. The
+  calculation uses only the already acquired overview points, so no extra RF
+  acquisition is performed. For selected inflection-pair candidates, the browser
+  interpolates `RT_BASELINE_FILTERED_MAG` at the published left/right frequencies
+  to mark the exact selected curvature crossings. Extrema-fallback boundaries
+  are not labelled as inflection points.
 - `RT_REFINE_SENSOR_ID`, `RT_REFINE_FREQUENCY_HZ`, `RT_REFINE_RE`, and
   `RT_REFINE_IM` publish measured dense-refinement points.
 - `RT_MODEL_SENSOR_ID`, `RT_MODEL_FREQUENCY_HZ`, `RT_MODEL_RE`, and

@@ -139,6 +139,7 @@ void configurableFilterRadiusAndQBounds()
     assert(radius_three.size() == 1);
     assert(radius_five.size() == 1);
     assert(radius_three[0].from_inflection_pair);
+    assert(radius_three[0].selection_quality > 0.0);
     assert(radius_three[0].frequency_hz / radius_three[0].fwhm_hz >= 50.0);
     assert(radius_three[0].frequency_hz / radius_three[0].fwhm_hz <= 150.0);
 
