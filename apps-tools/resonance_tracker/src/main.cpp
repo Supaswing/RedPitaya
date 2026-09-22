@@ -118,6 +118,7 @@ CFloatSignal rt_baseline_signal_sequence("RT_BASELINE_SIGNAL_SEQUENCE", 1, 0.0f)
 CFloatSignal rt_baseline_real("RT_BASELINE_RE", kBaselineSignalSize, 0.0f);
 CFloatSignal rt_baseline_imag("RT_BASELINE_IM", kBaselineSignalSize, 0.0f);
 CFloatSignal rt_baseline_filtered_magnitude("RT_BASELINE_FILTERED_MAG", kBaselineSignalSize, 0.0f);
+CFloatSignal rt_baseline_curvature("RT_BASELINE_CURVATURE", kBaselineSignalSize, 0.0f);
 CFloatSignal rt_candidate_left("RT_CANDIDATE_LEFT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_right("RT_CANDIDATE_RIGHT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_score("RT_CANDIDATE_SCORE", 2, 0.0f);
@@ -197,6 +198,7 @@ struct TelemetrySnapshot {
     std::vector<float> baseline_real;
     std::vector<float> baseline_imag;
     std::vector<float> baseline_filtered_magnitude;
+    std::vector<float> baseline_curvature;
     std::vector<float> candidate_left;
     std::vector<float> candidate_right;
     std::vector<float> candidate_score;
@@ -304,6 +306,7 @@ void publish_baseline(const BaselineResult& result)
     telemetry.baseline_real.clear();
     telemetry.baseline_imag.clear();
     telemetry.baseline_filtered_magnitude.clear();
+    telemetry.baseline_curvature.clear();
     for (const auto& point : result.overview) {
         telemetry.baseline_frequency.push_back(static_cast<float>(point.effective_frequency_hz));
         telemetry.baseline_real.push_back(static_cast<float>(point.real));
@@ -312,6 +315,8 @@ void publish_baseline(const BaselineResult& result)
     for (double magnitude_squared : result.smoothed_magnitude_squared)
         telemetry.baseline_filtered_magnitude.push_back(
             static_cast<float>(std::sqrt(std::max(0.0, magnitude_squared))));
+    for (double curvature : result.signed_curvature)
+        telemetry.baseline_curvature.push_back(static_cast<float>(curvature));
     telemetry.candidate_left.clear();
     telemetry.candidate_right.clear();
     telemetry.candidate_score.clear();
@@ -503,6 +508,7 @@ void acquisition_loop()
                 telemetry.baseline_real.clear();
                 telemetry.baseline_imag.clear();
                 telemetry.baseline_filtered_magnitude.clear();
+                telemetry.baseline_curvature.clear();
                 telemetry.candidate_left.clear();
                 telemetry.candidate_right.clear();
                 telemetry.candidate_score.clear();
@@ -869,6 +875,7 @@ void UpdateSignals(void)
     rt_baseline_real.Set(snapshot.baseline_real);
     rt_baseline_imag.Set(snapshot.baseline_imag);
     rt_baseline_filtered_magnitude.Set(snapshot.baseline_filtered_magnitude);
+    rt_baseline_curvature.Set(snapshot.baseline_curvature);
     rt_candidate_left.Set(snapshot.candidate_left);
     rt_candidate_right.Set(snapshot.candidate_right);
     rt_candidate_score.Set(snapshot.candidate_score);

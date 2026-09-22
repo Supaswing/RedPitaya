@@ -16,6 +16,7 @@
         const real = values('RT_BASELINE_RE');
         const imag = values('RT_BASELINE_IM');
         const filteredMagnitude = values('RT_BASELINE_FILTERED_MAG');
+        const curvature = values('RT_BASELINE_CURVATURE');
         const candidateLeft = values('RT_CANDIDATE_LEFT_HZ');
         const candidateRight = values('RT_CANDIDATE_RIGHT_HZ');
         const candidateScore = values('RT_CANDIDATE_SCORE');
@@ -49,8 +50,12 @@
         const xMaximum = Number(frequency[frequency.length - 1]);
         const xSpan = xMaximum - xMinimum || 1;
         const left = 42, right = canvas.width - 14, top = 18, bottom = canvas.height - 28;
+        const curvatureTop = bottom - 86;
+        const magnitudeBottom = curvatureTop - 18;
         const x = function (value) { return left + (Number(value) - xMinimum) / xSpan * (right - left); };
-        const y = function (value) { return bottom - (Number(value) - minimum) / span * (bottom - top); };
+        const y = function (value) {
+            return magnitudeBottom - (Number(value) - minimum) / span * (magnitudeBottom - top);
+        };
 
         function filteredAt(targetFrequency) {
             if (filteredMagnitude.length !== frequency.length) return NaN;
@@ -74,10 +79,10 @@
             if (index >= candidateRight.length) return;
             const x0 = x(value), x1 = x(candidateRight[index]);
             context.fillStyle = index ? 'rgba(105,215,198,.10)' : 'rgba(213,243,106,.10)';
-            context.fillRect(x0, top, Math.max(1, x1 - x0), bottom - top);
+            context.fillRect(x0, top, Math.max(1, x1 - x0), magnitudeBottom - top);
             context.strokeStyle = index ? '#69d7c6' : '#d5f36a';
             context.setLineDash([4, 4]);
-            context.strokeRect(x0, top, Math.max(1, x1 - x0), bottom - top);
+            context.strokeRect(x0, top, Math.max(1, x1 - x0), magnitudeBottom - top);
             context.setLineDash([]);
             context.fillStyle = context.strokeStyle;
             context.fillText('C' + (index + 1) + ' ' + Number(candidateScore[index] || 0).toExponential(2), x0 + 4, top + 13);
@@ -88,10 +93,10 @@
             const halfWidth = 0.5 * Number(fitFwhm[index]);
             const x0 = x(Number(center) - halfWidth), x1 = x(Number(center) + halfWidth);
             context.fillStyle = 'rgba(245,138,117,.08)';
-            context.fillRect(x0, top, Math.max(1, x1 - x0), bottom - top);
+            context.fillRect(x0, top, Math.max(1, x1 - x0), magnitudeBottom - top);
             context.strokeStyle = '#f58a75';
             context.lineWidth = 1;
-            context.beginPath(); context.moveTo(x(center), top); context.lineTo(x(center), bottom); context.stroke();
+            context.beginPath(); context.moveTo(x(center), top); context.lineTo(x(center), magnitudeBottom); context.stroke();
         });
 
         function line(frequencies, magnitudes, color, dashed, points) {
@@ -133,6 +138,48 @@
                 context.stroke();
             });
         });
+
+        const curvatureEdge = filterRadius + 1;
+        if (curvature.length === frequency.length && frequency.length > 2 * curvatureEdge) {
+            const curvatureValues = curvature.slice(curvatureEdge, curvature.length - curvatureEdge).map(Number);
+            const curvatureFrequencies = frequency.slice(curvatureEdge, frequency.length - curvatureEdge);
+            const maximumAbsoluteCurvature = Math.max.apply(null,
+                curvatureValues.map(function (value) { return Math.abs(value); }).filter(Number.isFinite)) || 1;
+            const curvatureMiddle = 0.5 * (curvatureTop + bottom);
+            const curvatureHalfHeight = 0.5 * (bottom - curvatureTop) - 5;
+            const curvatureY = function (value) {
+                return curvatureMiddle - Number(value) / maximumAbsoluteCurvature * curvatureHalfHeight;
+            };
+            context.fillStyle = '#8d9d98';
+            context.fillText('signed curvature', left, curvatureTop - 4);
+            context.textAlign = 'right';
+            context.fillText('+/- ' + maximumAbsoluteCurvature.toExponential(2), right, curvatureTop - 4);
+            context.textAlign = 'left';
+            context.strokeStyle = '#53615e';
+            context.lineWidth = 1;
+            context.beginPath(); context.moveTo(left, curvatureMiddle); context.lineTo(right, curvatureMiddle); context.stroke();
+            context.strokeStyle = '#ffcf66';
+            context.lineWidth = 2;
+            context.beginPath();
+            curvatureFrequencies.forEach(function (value, index) {
+                const py = curvatureY(curvatureValues[index]);
+                if (index) context.lineTo(x(value), py);
+                else context.moveTo(x(value), py);
+            });
+            context.stroke();
+            candidateLeft.forEach(function (leftFrequency, index) {
+                if (index >= candidateRight.length || Number(candidateIsInflection[index]) !== 1) return;
+                [leftFrequency, candidateRight[index]].forEach(function (pointFrequency) {
+                    const px = x(pointFrequency);
+                    context.strokeStyle = index ? '#69d7c6' : '#d5f36a';
+                    context.setLineDash([3, 3]);
+                    context.beginPath(); context.moveTo(px, curvatureTop); context.lineTo(px, bottom); context.stroke();
+                    context.setLineDash([]);
+                    context.fillStyle = context.strokeStyle;
+                    context.beginPath(); context.arc(px, curvatureMiddle, 4, 0, 2 * Math.PI); context.fill();
+                });
+            });
+        }
         ['#69d7c6', '#9d8cff'].forEach(function (color, sensorIndex) {
             const sensorId = sensorIndex + 1;
             const refineF = [], refineM = [], modelF = [], modelM = [];

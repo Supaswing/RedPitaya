@@ -118,9 +118,10 @@ Baseline/result scalars:
 Baseline signals:
 
 - `RT_BASELINE_FREQUENCY`, `RT_BASELINE_RE`, `RT_BASELINE_IM`, and
-  `RT_BASELINE_FILTERED_MAG`. The filtered-magnitude array is aligned with the
-  overview arrays; its unused radius samples at each edge are zero and are not
-  plotted.
+  `RT_BASELINE_FILTERED_MAG`, and `RT_BASELINE_CURVATURE`. The filtered-magnitude
+  and signed-curvature arrays are aligned with the overview arrays; unused edge
+  samples are zero and are not plotted. Curvature is rendered in a separate
+  zero-centered panel because its units and scale differ from magnitude.
 - `RT_BASELINE_SIGNAL_SEQUENCE` is a one-element signal and must equal
   `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
 - `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
