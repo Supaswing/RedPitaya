@@ -1,103 +1,141 @@
 # Resonance tracker architecture
 
-## Milestone 1 scope
-
-The application is a thin Red Pitaya adapter around the external VNA register
-contract. It does not implement resonance fitting or tracking yet.
+## Control and ownership
 
 ```text
-Browser
-  -> Bazaar start/stop lifecycle (`resonance_tracker`)
-  -> /wss WebSocket
-  -> CDataManager parameters/signals
-  -> resonance_tracker callbacks
-  -> acquisition thread
-  -> VNA register adapter
-  -> /dev/mem register block at 0x40700000
+dashboard modules -> shared browser store -> one WebSocket
+                                      |
+                         parameter/signal adapter (main.cpp)
+                                      |
+             one acquisition worker + InstrumentStateMachine
+                         /                         \
+             BaselineAnalyzer              RawIqAcquisition
+                         \                         /
+                   RawIqMeasurementSource: R = REF / INC
+                                      |
+                         FPGA register block at 0x40700000
 ```
 
-The acquisition thread owns the mapped register block. Web callbacks publish
-validated configuration through atomics. The worker publishes a complete
-`TelemetrySnapshot` under one mutex; only the Red Pitaya callbacks copy that
-snapshot into transport parameters and signals. This prevents the WebSocket
-serializer from observing mismatched I/Q, frequency, sequence, or status fields.
-Browser refresh cannot block measurement timing.
+The worker is the only owner of acquisition sequencing. Web callbacks copy
+validated controls into atomics and publish one mutex-protected telemetry
+snapshot. A command carries a monotonically changing `RT_COMMAND_SEQUENCE`, so
+a stale completion cannot satisfy a newer request. Baseline and diagnostic
+arrays are replaced only after a complete acquisition; partial arrays are never
+published as valid.
 
-## Parameters
+The frontend has one transport and one shared store. `ACTIVE_VIEW` exists only
+in JavaScript. Dashboard `enter`, `update`, and `leave` methods render the store;
+selecting a dashboard sends no hardware command. Only explicit buttons send an
+`RT_COMMAND`.
 
-- `RT_RUN`: writable run/stop control.
-- `RT_FREQUENCY_HZ`: requested integer frequency in Hz.
-- `RT_TELEMETRY_MS`: web publication interval, default 50 ms.
-- `RT_WINDOW_SHIFT`: requested integration exponent, 0-20. Integration length
-  is `2^RT_WINDOW_SHIFT` samples at 125 MHz.
-- `RT_STATE`: `STOPPED`, `RUNNING`, or `ERROR`.
-- `RT_ERROR`: backend error text.
-- `RT_SEQUENCE`: monotonically increasing valid acquisition sequence. It may
-  advance by more than one between web updates.
-- `RT_VALID`: complete ready/read result status.
-- `RT_BUSY`: measurement in progress.
-- `RT_OVERFLOW`: unavailable in the external hardware contract.
-- `RT_REQUESTED_FREQUENCY_HZ` and `RT_EFFECTIVE_FREQUENCY_HZ`.
-- `RT_INC_I`, `RT_INC_Q`, `RT_REF_I`, `RT_REF_Q` raw signed register values.
-- `RT_INC_MAG`, `RT_INC_PHASE_DEG`, `RT_REF_MAG`, `RT_REF_PHASE_DEG`.
-- `RT_ACQUISITION_RATE_HZ` and `RT_PUBLICATION_RATE_HZ`.
-- `RT_EFFECTIVE_WINDOW_SHIFT`, `RT_INTEGRATION_SAMPLES`, and
-  `RT_INTEGRATION_TIME_US` report the verified applied integration setting.
-- `RT_PERIOD_COUNT` reports the currently applied value, fixed at zero until
-  the register behavior is defined.
-- `RT_R_REAL`, `RT_R_IMAG`, `RT_R_MAG`, and `RT_R_PHASE_DEG` describe the
-  current complex reflection ratio; `RT_R_VALID` is false for a zero incident
-  vector.
-- `RT_STATS_COUNT` and `RT_RATIO_STATS_COUNT` report rolling-window occupancy.
-- `RT_{INC,REF}_{I,Q}_{MEAN,STDDEV}` and
-  `RT_R_{REAL,IMAG,MAG}_{MEAN,STDDEV}` contain rolling statistics.
-- `RT_R_MEAN_PHASE_DEG` is the phase of the mean complex ratio.
+## State transitions
 
-Signals `RT_HISTORY_FREQUENCY`, `RT_HISTORY_INC_MAG`, and
-`RT_HISTORY_REF_MAG` contain at most 128 recent valid points.
+| Current state | Command/result | Next state |
+| --- | --- | --- |
+| STOPPED, RAW_IQ, BASELINE_READY, ERROR | start baseline | BASELINE_ACQUIRING |
+| BASELINE_ACQUIRING | overview complete | RESONANCE_FINDING |
+| RESONANCE_FINDING | valid candidates and fits complete | BASELINE_READY |
+| BASELINE_ACQUIRING, RESONANCE_FINDING | cancel | STOPPED |
+| STOPPED, RAW_IQ, BASELINE_READY | start diagnostics | DIAGNOSTICS |
+| DIAGNOSTICS | complete/cancel | BASELINE_READY if a baseline exists, otherwise STOPPED |
+| STOPPED, BASELINE_READY, ERROR | start raw I/Q | RAW_IQ |
+| Any state | stop | STOPPED |
+| Any state | acquisition/analysis failure | ERROR |
 
-## Reuse decisions
+Completions are legal only in their matching active state. New baseline
+acquisition invalidates and clears the previous baseline publication. Cancelling
+diagnostics retains the last complete diagnostic point set.
 
-Reused from `apps-tools/impedance_analyzer`: CMake/install layout, the
-`rp_app_init`/`rp_app_exit` lifecycle, `CDataManager` parameter and signal
-transport, a worker thread, and the WebSocket client pattern.
+## Acquisition and analysis
 
-Not reused: impedance conversion, calibration model, LCR extension handling,
-frequency sweep algorithm, and its UI. The VNA register adapter follows the
-external `InterfaceVna` repository and is kept separate from the future tracker
-engine.
-
-## Rates and ownership
-
-Acquisition is driven by valid FPGA windows and is not timer-driven by the
-browser. `RT_ACQUISITION_RATE_HZ` measures completed acquisitions. History
-sampling and WebSocket publication are bounded by `RT_TELEMETRY_MS`, default to
-20 Hz, and `RT_PUBLICATION_RATE_HZ` reports the measured history-publication
-rate. History is bounded to 128 points. A frequency change marks the old sample
-invalid, restarts the generator, waits for settling, clears stale status, and
-only then publishes a result bearing the new effective frequency.
-
-## Statistical contract
-
-`INC` and `REF` are the coherent incident/reference pair at one frequency; they
-are independent of the future logical-sensor selection. The backend calculates
+`RawIqAcquisition` preserves the Milestone 1 register, reset, settling, ready,
+and coherent four-register read behavior. `RawIqMeasurementSource` is the only
+conversion layer used by sensor analysis:
 
 ```text
 R = (I_ref + j Q_ref) / (I_inc + j Q_inc)
 ```
 
-using double-precision intermediates. Means and sample standard deviations use
-at most the latest 128 valid acquisitions. I/Q statistics include every valid
-acquisition. Ratio statistics exclude samples whose incident vector is exactly
-zero. The window resets at each RUN transition and whenever frequency or
-`WINDOW_SHIFT` changes, so statistics never combine operating points or
-integration lengths. JavaScript only formats backend results.
+A zero incident vector is invalid rather than being represented as zero.
+`BaselineAnalyzer` is hardware-independent and also accepts
+`ReplayMeasurementSource`.
 
-## Deployment contract
+The Milestone 2A algorithm is ported from
+`C:/Users/bud/Orthsens/sdsi_reader/resonance_tracker.c` and
+`resonance_tracker.h`. Ported behavior includes the 101-point overview, three
+complex averages, 11-point quadratic Savitzky-Golay smoothing, signed-curvature
+candidate pairing, extrema fallback, overlap-aware ranking, 21-point
+refinement, complex Lorentzian plus quadratic-background fit, replicate-based
+frequency standard error, and five points at offsets -2 through +2. NanoVNA IF
+bandwidth and hardware control are deliberately not ported.
 
-The application builds `controllerhf.so`, the backend filename loaded by the
-Bazaar/Nginx implementation in this repository. CMake places the shared library
-and static web assets in the `resonance_tracker` package directory before the
-directory is installed under `${INSTALL_DIR}/www/apps`. The root `Makefile`
-target is `resonance_tracker`; the standalone target-device helper is
-`apps-tools/resonance_tracker/build.sh`.
+Default baseline timing is 303 coherent windows for the overview, followed by
+63 windows and five template windows per requested resonance. With one sensor
+that is 371 windows plus DDS settling and software overhead. The actual duration
+depends on `WINDOW_SHIFT`. Progress is weighted 70% overview, 2% candidate
+finding, 20% refinement, and 8% template acquisition.
+
+## Parameter contract
+
+Existing Milestone 1 parameters retain their names. `RT_STATE` now maps to:
+
+```text
+0 STOPPED, 1 RAW_IQ, 2 BASELINE_ACQUIRING, 3 BASELINE_READY,
+4 RESONANCE_FINDING, 5 DIAGNOSTICS, 6 SEARCHING, 7 TRACKING,
+8 DEGRADED, 9 RELOCKING, 10 ERROR
+```
+
+Commands:
+
+- `RT_COMMAND`: 1 start baseline, 2 cancel baseline, 3 start diagnostics,
+  4 cancel diagnostics.
+- `RT_COMMAND_SEQUENCE`: client command sequence; `RT_COMMAND_ACK` acknowledges
+  receipt.
+- `RT_BASELINE_START_HZ`, `RT_BASELINE_STOP_HZ`, and
+  `RT_BASELINE_SENSOR_COUNT`: requested scan configuration. Until physical
+  sensor multiplexing is defined, this count means the number of non-overlapping
+  resonances to select; IDs are assigned in increasing-frequency order.
+
+Baseline/result scalars:
+
+- `RT_BASELINE_SEQUENCE`, `RT_BASELINE_PROGRESS`, `RT_BASELINE_COMPLETE`,
+  `RT_BASELINE_VALID`. A completed rejected scan may be inspected but cannot be
+  used for diagnostics or tracking.
+- `RT_RESONANCE_COUNT`, `RT_RESONANCE_SELECTED`.
+- `RT_RESONANCE_FREQUENCY_HZ`, `RT_RESONANCE_Q`,
+  `RT_RESONANCE_FWHM_HZ`, `RT_RESONANCE_SE_HZ`, and
+  `RT_RESONANCE_MODEL_QUALITY` describe the first selected result.
+- `RT_RESONANCE_MODEL_VALID` distinguishes the primary complex-model fit from
+  the curvature fallback. Model quality is zero when the fallback is used.
+
+Baseline signals:
+
+- `RT_BASELINE_FREQUENCY`, `RT_BASELINE_RE`, `RT_BASELINE_IM`.
+- `RT_BASELINE_SIGNAL_SEQUENCE` is a one-element signal and must equal
+  `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
+- `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
+  `RT_CANDIDATE_SCORE`.
+
+Diagnostics scalars/signals:
+
+- `RT_DIAG_SEQUENCE`, `RT_DIAG_SENSOR_ID`, `RT_DIAG_COMPLETE`.
+- `RT_DIAG_OFFSET`, `RT_DIAG_FREQUENCY_HZ`, `RT_DIAG_RE`, `RT_DIAG_IM`.
+- `RT_DIAG_SIGNAL_SEQUENCE` must equal `RT_DIAG_SEQUENCE` before rendering.
+
+Each diagnostic point is the RTM-like tuple `(sequence, sensor_id,
+signed_offset, effective_frequency_hz, complex_response)`. The browser draws
+only the current or last complete sequence.
+
+## Rates and bounded rendering
+
+Raw acquisition runs at the fastest ready-driven rate supported by the current
+window. Web publication defaults to 20 Hz and remains independent. Raw history
+is bounded to 128 points. Baseline has exactly 101 overview points and
+diagnostics exactly five points. Hidden dashboards receive no render calls and
+own no timers.
+
+## Scope boundary
+
+The `SEARCHING`, `TRACKING`, `DEGRADED`, and `RELOCKING` values reserve the
+Milestone 2B state contract. Continuous tracking, loss detection, and relocking
+are not started by this Milestone 2A implementation.

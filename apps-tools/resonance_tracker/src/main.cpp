@@ -2,7 +2,10 @@
 #include <DataManager.h>
 
 #include "iq_statistics.hpp"
+#include "instrument_state.hpp"
 #include "raw_iq_acquisition.hpp"
+#include "raw_iq_measurement_source.hpp"
+#include "resonance_analysis.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -13,12 +16,12 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
-constexpr int kStopped = 0;
-constexpr int kRunning = 1;
-constexpr int kError = 2;
+constexpr int kStopped = static_cast<int>(InstrumentState::Stopped);
+constexpr int kError = static_cast<int>(InstrumentState::Error);
 constexpr std::size_t kHistorySize = 128;
 constexpr int kDefaultFrequencyHz = 32000000;
 constexpr int kDefaultTelemetryMs = 50;
@@ -26,12 +29,34 @@ constexpr int kDefaultWindowShift = 17;
 constexpr int kDefaultPeriodCount = 0;
 constexpr std::size_t kStatisticsSize = 128;
 constexpr double kFpgaClockHz = 125000000.0;
+constexpr std::size_t kBaselineSignalSize = 101;
+constexpr std::size_t kDiagnosticSignalSize = 5;
+
+enum class RequestedOperation {
+    Idle,
+    Baseline,
+    Diagnostics,
+};
+
+enum class WebCommand {
+    None = 0,
+    StartBaseline = 1,
+    CancelBaseline = 2,
+    StartDiagnostics = 3,
+    CancelDiagnostics = 4,
+};
 
 CBooleanParameter rt_run("RT_RUN", CBaseParameter::RW, false, 0);
 CIntParameter rt_frequency("RT_FREQUENCY_HZ", CBaseParameter::RW, kDefaultFrequencyHz, 0, 1, 62500000);
 CIntParameter rt_telemetry_ms("RT_TELEMETRY_MS", CBaseParameter::RW, kDefaultTelemetryMs, 0, 10, 1000);
 CIntParameter rt_window_shift("RT_WINDOW_SHIFT", CBaseParameter::RW, kDefaultWindowShift, 0, 0, 20);
-CIntParameter rt_state("RT_STATE", CBaseParameter::RO, kStopped, 0, 0, 2);
+CIntParameter rt_command("RT_COMMAND", CBaseParameter::RW, 0, 0, 0, 4);
+CIntParameter rt_command_sequence("RT_COMMAND_SEQUENCE", CBaseParameter::RW, 0, 0, 0, 2147483647);
+CIntParameter rt_command_ack("RT_COMMAND_ACK", CBaseParameter::RO, 0, 0, 0, 2147483647);
+CIntParameter rt_baseline_start("RT_BASELINE_START_HZ", CBaseParameter::RW, 30000000, 0, 1, 62500000);
+CIntParameter rt_baseline_stop("RT_BASELINE_STOP_HZ", CBaseParameter::RW, 34000000, 0, 1, 62500000);
+CIntParameter rt_baseline_sensors("RT_BASELINE_SENSOR_COUNT", CBaseParameter::RW, 1, 0, 1, 2);
+CIntParameter rt_state("RT_STATE", CBaseParameter::RO, kStopped, 0, kStopped, kError);
 CStringParameter rt_error("RT_ERROR", CBaseParameter::RO, "", 0);
 CIntParameter rt_sequence("RT_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
 CBooleanParameter rt_valid("RT_VALID", CBaseParameter::RO, false, 0);
@@ -81,6 +106,34 @@ CFloatParameter rt_ratio_mean_phase("RT_R_MEAN_PHASE_DEG", CBaseParameter::RO, 0
 CFloatSignal rt_history_frequency("RT_HISTORY_FREQUENCY", kHistorySize, 0.0f);
 CFloatSignal rt_history_inc_mag("RT_HISTORY_INC_MAG", kHistorySize, 0.0f);
 CFloatSignal rt_history_ref_mag("RT_HISTORY_REF_MAG", kHistorySize, 0.0f);
+CFloatSignal rt_baseline_frequency("RT_BASELINE_FREQUENCY", kBaselineSignalSize, 0.0f);
+CFloatSignal rt_baseline_signal_sequence("RT_BASELINE_SIGNAL_SEQUENCE", 1, 0.0f);
+CFloatSignal rt_baseline_real("RT_BASELINE_RE", kBaselineSignalSize, 0.0f);
+CFloatSignal rt_baseline_imag("RT_BASELINE_IM", kBaselineSignalSize, 0.0f);
+CFloatSignal rt_candidate_left("RT_CANDIDATE_LEFT_HZ", 2, 0.0f);
+CFloatSignal rt_candidate_right("RT_CANDIDATE_RIGHT_HZ", 2, 0.0f);
+CFloatSignal rt_candidate_score("RT_CANDIDATE_SCORE", 2, 0.0f);
+CFloatSignal rt_diag_offset("RT_DIAG_OFFSET", kDiagnosticSignalSize, 0.0f);
+CFloatSignal rt_diag_signal_sequence("RT_DIAG_SIGNAL_SEQUENCE", 1, 0.0f);
+CFloatSignal rt_diag_frequency("RT_DIAG_FREQUENCY_HZ", kDiagnosticSignalSize, 0.0f);
+CFloatSignal rt_diag_real("RT_DIAG_RE", kDiagnosticSignalSize, 0.0f);
+CFloatSignal rt_diag_imag("RT_DIAG_IM", kDiagnosticSignalSize, 0.0f);
+
+CIntParameter rt_baseline_sequence("RT_BASELINE_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
+CFloatParameter rt_baseline_progress("RT_BASELINE_PROGRESS", CBaseParameter::RO, 0, 0, 0, 100);
+CBooleanParameter rt_baseline_complete("RT_BASELINE_COMPLETE", CBaseParameter::RO, false, 0);
+CBooleanParameter rt_baseline_valid("RT_BASELINE_VALID", CBaseParameter::RO, false, 0);
+CIntParameter rt_resonance_count("RT_RESONANCE_COUNT", CBaseParameter::RO, 0, 0, 0, 2);
+CIntParameter rt_resonance_selected("RT_RESONANCE_SELECTED", CBaseParameter::RO, 0, 0, 0, 2);
+CDoubleParameter rt_resonance_frequency("RT_RESONANCE_FREQUENCY_HZ", CBaseParameter::RO, 0, 0, 0, 62500000);
+CDoubleParameter rt_resonance_q("RT_RESONANCE_Q", CBaseParameter::RO, 0, 0, 0, 1e9);
+CDoubleParameter rt_resonance_fwhm("RT_RESONANCE_FWHM_HZ", CBaseParameter::RO, 0, 0, 0, 62500000);
+CDoubleParameter rt_resonance_se("RT_RESONANCE_SE_HZ", CBaseParameter::RO, 0, 0, 0, 62500000);
+CFloatParameter rt_resonance_quality("RT_RESONANCE_MODEL_QUALITY", CBaseParameter::RO, 0, 0, 0, 1);
+CBooleanParameter rt_resonance_model_valid("RT_RESONANCE_MODEL_VALID", CBaseParameter::RO, false, 0);
+CIntParameter rt_diag_sequence("RT_DIAG_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
+CIntParameter rt_diag_sensor("RT_DIAG_SENSOR_ID", CBaseParameter::RO, 0, 0, 0, 2);
+CBooleanParameter rt_diag_complete("RT_DIAG_COMPLETE", CBaseParameter::RO, false, 0);
 
 struct TelemetrySnapshot {
     int state = kStopped;
@@ -108,6 +161,32 @@ struct TelemetrySnapshot {
     std::vector<float> history_frequency;
     std::vector<float> history_inc_mag;
     std::vector<float> history_ref_mag;
+    int command_ack = 0;
+    int baseline_sequence = 0;
+    float baseline_progress = 0.0f;
+    bool baseline_complete = false;
+    bool baseline_valid = false;
+    int resonance_count = 0;
+    int resonance_selected = 0;
+    double resonance_frequency_hz = 0.0;
+    double resonance_q = 0.0;
+    double resonance_fwhm_hz = 0.0;
+    double resonance_se_hz = 0.0;
+    float resonance_model_quality = 0.0f;
+    bool resonance_model_valid = false;
+    std::vector<float> baseline_frequency;
+    std::vector<float> baseline_real;
+    std::vector<float> baseline_imag;
+    std::vector<float> candidate_left;
+    std::vector<float> candidate_right;
+    std::vector<float> candidate_score;
+    int diagnostic_sequence = 0;
+    int diagnostic_sensor_id = 0;
+    bool diagnostic_complete = false;
+    std::vector<float> diagnostic_offset;
+    std::vector<float> diagnostic_frequency;
+    std::vector<float> diagnostic_real;
+    std::vector<float> diagnostic_imag;
 };
 
 RawIqAcquisition acquisition;
@@ -117,16 +196,156 @@ std::atomic<bool> run_requested{false};
 std::atomic<int> requested_frequency_hz{kDefaultFrequencyHz};
 std::atomic<int> telemetry_interval_ms{kDefaultTelemetryMs};
 std::atomic<int> requested_window_shift{kDefaultWindowShift};
+std::atomic<int> baseline_start_hz{30000000};
+std::atomic<int> baseline_stop_hz{34000000};
+std::atomic<int> baseline_sensor_count{1};
+std::mutex operation_mutex;
+RequestedOperation requested_operation = RequestedOperation::Idle;
+std::uint64_t operation_generation = 0;
+std::mutex instrument_state_mutex;
+InstrumentStateMachine instrument_state_machine;
 std::mutex telemetry_mutex;
 TelemetrySnapshot telemetry;
 
-void set_state(int state, const std::string& error, bool valid, bool busy)
+std::pair<RequestedOperation, std::uint64_t> operation_snapshot()
+{
+    std::lock_guard<std::mutex> lock(operation_mutex);
+    return {requested_operation, operation_generation};
+}
+
+void request_operation(RequestedOperation operation)
+{
+    std::lock_guard<std::mutex> lock(operation_mutex);
+    ++operation_generation;
+    requested_operation = operation;
+}
+
+bool operation_is_current(RequestedOperation operation, std::uint64_t generation)
+{
+    std::lock_guard<std::mutex> lock(operation_mutex);
+    return requested_operation == operation && operation_generation == generation;
+}
+
+bool complete_operation(RequestedOperation operation, std::uint64_t generation)
+{
+    std::lock_guard<std::mutex> lock(operation_mutex);
+    if (requested_operation != operation || operation_generation != generation) return false;
+    requested_operation = RequestedOperation::Idle;
+    return true;
+}
+
+void acknowledge_command(int sequence)
 {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
-    telemetry.state = state;
-    telemetry.error = error;
+    telemetry.command_ack = sequence;
+}
+
+void set_baseline_progress(BaselineStage stage, std::size_t completed, std::size_t total)
+{
+    double progress = 0.0;
+    if (stage == BaselineStage::Overview)
+        progress = total == 0 ? 0.0 : 70.0 * completed / total;
+    else if (stage == BaselineStage::Finding)
+        progress = 72.0;
+    else if (stage == BaselineStage::Refining)
+        progress = total == 0 ? 72.0 : 72.0 + 20.0 * completed / total;
+    else
+        progress = total == 0 ? 92.0 : 92.0 + 8.0 * completed / total;
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+    telemetry.baseline_progress = static_cast<float>(std::min(progress, 100.0));
+}
+
+void publish_baseline(const BaselineResult& result)
+{
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+    telemetry.baseline_sequence = static_cast<int>(result.sequence);
+    telemetry.baseline_progress = 100.0f;
+    telemetry.baseline_complete = result.complete;
+    telemetry.baseline_valid = result.valid;
+    telemetry.resonance_count = static_cast<int>(result.resonances.size());
+    telemetry.resonance_selected = result.resonances.empty() ? 0 : 1;
+    telemetry.baseline_frequency.clear();
+    telemetry.baseline_real.clear();
+    telemetry.baseline_imag.clear();
+    for (const auto& point : result.overview) {
+        telemetry.baseline_frequency.push_back(static_cast<float>(point.effective_frequency_hz));
+        telemetry.baseline_real.push_back(static_cast<float>(point.real));
+        telemetry.baseline_imag.push_back(static_cast<float>(point.imag));
+    }
+    telemetry.candidate_left.clear();
+    telemetry.candidate_right.clear();
+    telemetry.candidate_score.clear();
+    for (const auto& candidate : result.candidates) {
+        telemetry.candidate_left.push_back(static_cast<float>(candidate.left_frequency_hz));
+        telemetry.candidate_right.push_back(static_cast<float>(candidate.right_frequency_hz));
+        telemetry.candidate_score.push_back(static_cast<float>(candidate.score));
+    }
+    if (!result.resonances.empty()) {
+        const auto& resonance = result.resonances.front();
+        telemetry.resonance_frequency_hz = resonance.frequency_hz;
+        telemetry.resonance_q = resonance.q;
+        telemetry.resonance_fwhm_hz = resonance.fwhm_hz;
+        telemetry.resonance_se_hz = resonance.frequency_se_hz;
+        telemetry.resonance_model_quality = static_cast<float>(resonance.model_explained_fraction);
+        telemetry.resonance_model_valid = resonance.complex_model_valid;
+    }
+}
+
+void publish_diagnostics(const DiagnosticResult& result)
+{
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+    telemetry.diagnostic_sequence = static_cast<int>(result.sequence);
+    telemetry.diagnostic_sensor_id = static_cast<int>(result.sensor_id);
+    telemetry.diagnostic_complete = result.complete;
+    telemetry.diagnostic_offset.clear();
+    telemetry.diagnostic_frequency.clear();
+    telemetry.diagnostic_real.clear();
+    telemetry.diagnostic_imag.clear();
+    for (const auto& point : result.points) {
+        telemetry.diagnostic_offset.push_back(static_cast<float>(point.offset));
+        telemetry.diagnostic_frequency.push_back(static_cast<float>(point.measurement.effective_frequency_hz));
+        telemetry.diagnostic_real.push_back(static_cast<float>(point.measurement.real));
+        telemetry.diagnostic_imag.push_back(static_cast<float>(point.measurement.imag));
+    }
+}
+
+bool apply_state_command(InstrumentCommand command, const std::string& detail = "")
+{
+    StateTransitionResult result;
+    std::string state_error;
+    {
+        std::lock_guard<std::mutex> state_lock(instrument_state_mutex);
+        result = instrument_state_machine.apply(command, detail);
+        state_error = result.accepted ? instrument_state_machine.error() : result.error;
+    }
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+    telemetry.state = static_cast<int>(result.current);
+    telemetry.error = state_error;
+    return result.accepted;
+}
+
+void set_activity(bool valid, bool busy)
+{
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
     telemetry.valid = valid;
     telemetry.busy = busy;
+}
+
+bool apply_window_shift(int window_shift, int& applied_window_shift)
+{
+    if (window_shift == applied_window_shift) return true;
+    std::string error;
+    if (!acquisition.setWindowShift(static_cast<std::uint32_t>(window_shift), error)) {
+        apply_state_command(InstrumentCommand::Fail, error);
+        return false;
+    }
+    applied_window_shift = window_shift;
+    const double samples = std::ldexp(1.0, applied_window_shift);
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+    telemetry.effective_window_shift = applied_window_shift;
+    telemetry.integration_samples = samples;
+    telemetry.integration_time_us = static_cast<float>(samples * 1e6 / kFpgaClockHz);
+    return true;
 }
 
 void append_history(TelemetrySnapshot& snapshot, const RawIqSample& sample)
@@ -146,7 +365,6 @@ void publish_sample(const RawIqSample& sample, const IqStatisticsSnapshot& stati
 {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
     ++telemetry.sequence;
-    telemetry.state = kRunning;
     telemetry.error.clear();
     telemetry.valid = true;
     telemetry.busy = false;
@@ -169,6 +387,11 @@ void publish_sample(const RawIqSample& sample, const IqStatisticsSnapshot& stati
 void acquisition_loop()
 {
     RollingIqStatistics statistics(kStatisticsSize);
+    RawIqMeasurementSource measurement_source(acquisition);
+    BaselineAnalyzer baseline_analyzer;
+    BaselineResult last_baseline;
+    std::uint64_t baseline_sequence = 0;
+    std::uint64_t diagnostic_sequence = 0;
     bool was_running = false;
     bool first_point = true;
     int last_frequency_hz = requested_frequency_hz.load();
@@ -179,8 +402,131 @@ void acquisition_loop()
     int publication_count = 0;
 
     while (!exit_requested.load()) {
+        const auto [operation, generation] = operation_snapshot();
+        if (operation == RequestedOperation::Baseline) {
+            run_requested.store(false);
+            was_running = false;
+            first_point = true;
+            if (!acquisition.isOpen()) {
+                complete_operation(operation, generation);
+                apply_state_command(InstrumentCommand::Fail, "VNA register block is not open");
+                set_activity(false, false);
+                continue;
+            }
+            if (!apply_window_shift(requested_window_shift.load(), applied_window_shift)) {
+                complete_operation(operation, generation);
+                set_activity(false, false);
+                continue;
+            }
+            if (!apply_state_command(InstrumentCommand::StartBaseline)) {
+                complete_operation(operation, generation);
+                set_activity(false, false);
+                continue;
+            }
+            set_activity(false, true);
+            last_baseline = BaselineResult{};
+            {
+                std::lock_guard<std::mutex> lock(telemetry_mutex);
+                telemetry.baseline_progress = 0.0f;
+                telemetry.baseline_complete = false;
+                telemetry.baseline_valid = false;
+                telemetry.resonance_count = 0;
+                telemetry.baseline_frequency.clear();
+                telemetry.baseline_real.clear();
+                telemetry.baseline_imag.clear();
+                telemetry.candidate_left.clear();
+                telemetry.candidate_right.clear();
+                telemetry.candidate_score.clear();
+            }
+            BaselineConfig config;
+            config.start_frequency_hz = static_cast<std::uint32_t>(baseline_start_hz.load());
+            config.stop_frequency_hz = static_cast<std::uint32_t>(baseline_stop_hz.load());
+            config.sensor_count = static_cast<std::size_t>(baseline_sensor_count.load());
+            bool finding_state_entered = false;
+            BaselineResult result = baseline_analyzer.acquire(
+                ++baseline_sequence, config, measurement_source,
+                [&](BaselineStage stage, std::size_t completed, std::size_t total) {
+                    if (stage == BaselineStage::Finding && !finding_state_entered) {
+                        apply_state_command(InstrumentCommand::StartResonanceFinding);
+                        finding_state_entered = true;
+                    }
+                    set_baseline_progress(stage, completed, total);
+                },
+                [&]() {
+                    return exit_requested.load() || !operation_is_current(RequestedOperation::Baseline, generation);
+                });
+            if (!complete_operation(RequestedOperation::Baseline, generation)) {
+                apply_state_command(InstrumentCommand::CancelBaseline);
+                set_activity(false, false);
+                continue;
+            }
+            if (!result.valid) {
+                if (result.complete) publish_baseline(result);
+                apply_state_command(InstrumentCommand::Fail,
+                                    result.error.empty() ? "baseline acquisition failed" : result.error);
+                set_activity(false, false);
+                continue;
+            }
+            if (!finding_state_entered) {
+                apply_state_command(InstrumentCommand::StartResonanceFinding);
+                finding_state_entered = true;
+            }
+            last_baseline = std::move(result);
+            publish_baseline(last_baseline);
+            apply_state_command(InstrumentCommand::CompleteResonanceFinding);
+            set_activity(false, false);
+            continue;
+        }
+
+        if (operation == RequestedOperation::Diagnostics) {
+            run_requested.store(false);
+            was_running = false;
+            first_point = true;
+            if (!apply_window_shift(requested_window_shift.load(), applied_window_shift)) {
+                complete_operation(operation, generation);
+                set_activity(false, false);
+                continue;
+            }
+            if (!last_baseline.valid || last_baseline.resonances.empty()) {
+                complete_operation(operation, generation);
+                std::lock_guard<std::mutex> lock(telemetry_mutex);
+                telemetry.error = "diagnostics requires a valid completed baseline";
+                telemetry.valid = false;
+                telemetry.busy = false;
+                continue;
+            }
+            if (!apply_state_command(InstrumentCommand::StartDiagnostics)) {
+                complete_operation(operation, generation);
+                set_activity(false, false);
+                continue;
+            }
+            set_activity(false, true);
+            const DiagnosticResult result = acquireDiagnostics(
+                ++diagnostic_sequence, last_baseline.resonances.front(), measurement_source, [&]() {
+                    return exit_requested.load() || !operation_is_current(RequestedOperation::Diagnostics, generation);
+                });
+            if (!complete_operation(RequestedOperation::Diagnostics, generation)) {
+                apply_state_command(InstrumentCommand::CancelDiagnostics);
+                set_activity(false, false);
+                continue;
+            }
+            if (!result.complete) {
+                apply_state_command(InstrumentCommand::Fail,
+                                    result.error.empty() ? "diagnostics acquisition failed" : result.error);
+                set_activity(false, false);
+                continue;
+            }
+            publish_diagnostics(result);
+            apply_state_command(InstrumentCommand::CompleteDiagnostics);
+            set_activity(false, false);
+            continue;
+        }
+
         if (!run_requested.load()) {
-            if (was_running) set_state(kStopped, "", false, false);
+            if (was_running) {
+                apply_state_command(InstrumentCommand::Stop);
+                set_activity(false, false);
+            }
             was_running = false;
             first_point = true;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -189,7 +535,8 @@ void acquisition_loop()
 
         if (!acquisition.isOpen()) {
             run_requested.store(false);
-            set_state(kError, "VNA register block is not open", false, false);
+            apply_state_command(InstrumentCommand::Fail, "VNA register block is not open");
+            set_activity(false, false);
             continue;
         }
 
@@ -198,6 +545,12 @@ void acquisition_loop()
         const int window_shift = requested_window_shift.load();
         const bool window_shift_changed = window_shift != applied_window_shift;
         last_frequency_hz = frequency_hz;
+        if (!was_running) {
+            if (!apply_state_command(InstrumentCommand::StartRawIq)) {
+                run_requested.store(false);
+                continue;
+            }
+        }
         if (!was_running || frequency_changed || window_shift_changed) {
             statistics.reset();
             std::lock_guard<std::mutex> lock(telemetry_mutex);
@@ -205,19 +558,12 @@ void acquisition_loop()
             telemetry.valid = false;
         }
         if (window_shift_changed) {
-            std::string configuration_error;
-            if (!acquisition.setWindowShift(static_cast<std::uint32_t>(window_shift), configuration_error)) {
+            if (!apply_window_shift(window_shift, applied_window_shift)) {
                 run_requested.store(false);
-                set_state(kError, configuration_error, false, false);
+                set_activity(false, false);
                 was_running = false;
                 continue;
             }
-            applied_window_shift = window_shift;
-            const double samples = std::ldexp(1.0, applied_window_shift);
-            std::lock_guard<std::mutex> lock(telemetry_mutex);
-            telemetry.effective_window_shift = applied_window_shift;
-            telemetry.integration_samples = samples;
-            telemetry.integration_time_us = static_cast<float>(samples * 1e6 / kFpgaClockHz);
         }
         was_running = true;
         {
@@ -237,12 +583,14 @@ void acquisition_loop()
         last_measurement = now;
         if (!valid) {
             run_requested.store(false);
-            set_state(kError, error, false, false);
+            apply_state_command(InstrumentCommand::Fail, error);
+            set_activity(false, false);
             was_running = false;
             continue;
         }
         if (!run_requested.load()) {
-            set_state(kStopped, "", false, false);
+            apply_state_command(InstrumentCommand::Stop);
+            set_activity(false, false);
             was_running = false;
             first_point = true;
             continue;
@@ -291,7 +639,7 @@ TelemetrySnapshot copy_telemetry()
 
 extern "C" const char* rp_app_desc(void)
 {
-    return "Raw coherent I/Q resonance tracker diagnostic application.";
+    return "Coherent I/Q baseline, resonance analysis, and diagnostic application.";
 }
 
 extern "C" int rp_app_init(void)
@@ -303,11 +651,26 @@ extern "C" int rp_app_init(void)
     requested_frequency_hz.store(kDefaultFrequencyHz);
     telemetry_interval_ms.store(kDefaultTelemetryMs);
     requested_window_shift.store(kDefaultWindowShift);
+    baseline_start_hz.store(30000000);
+    baseline_stop_hz.store(34000000);
+    baseline_sensor_count.store(1);
+    {
+        std::lock_guard<std::mutex> lock(operation_mutex);
+        requested_operation = RequestedOperation::Idle;
+        operation_generation = 0;
+    }
+    {
+        std::lock_guard<std::mutex> state_lock(instrument_state_mutex);
+        instrument_state_machine.reset();
+    }
     {
         std::lock_guard<std::mutex> lock(telemetry_mutex);
         telemetry = TelemetrySnapshot{};
     }
-    if (!acquisition.open()) set_state(kError, "Unable to map VNA register block at 0x40700000", false, false);
+    if (!acquisition.open()) {
+        apply_state_command(InstrumentCommand::Fail, "Unable to map VNA register block at 0x40700000");
+        set_activity(false, false);
+    }
     worker = std::thread(acquisition_loop);
     return 0;
 }
@@ -316,7 +679,9 @@ extern "C" int rp_app_exit(void)
 {
     exit_requested.store(true);
     run_requested.store(false);
+    request_operation(RequestedOperation::Idle);
     if (worker.joinable()) worker.join();
+    apply_state_command(InstrumentCommand::Stop);
     acquisition.close();
     return 0;
 }
@@ -328,6 +693,12 @@ void UpdateParams(void)
     rt_frequency.SendValue(requested_frequency_hz.load());
     rt_telemetry_ms.SendValue(telemetry_interval_ms.load());
     rt_window_shift.SendValue(requested_window_shift.load());
+    rt_command.SendValue(0);
+    rt_command_sequence.SendValue(snapshot.command_ack);
+    rt_command_ack.SendValue(snapshot.command_ack);
+    rt_baseline_start.SendValue(baseline_start_hz.load());
+    rt_baseline_stop.SendValue(baseline_stop_hz.load());
+    rt_baseline_sensors.SendValue(baseline_sensor_count.load());
     rt_state.SendValue(snapshot.state);
     rt_error.SendValue(snapshot.error);
     rt_sequence.SendValue(snapshot.sequence);
@@ -375,6 +746,21 @@ void UpdateParams(void)
     rt_ratio_magnitude_stddev.SendValue(
         static_cast<float>(snapshot.statistics.ratio_magnitude_statistics.sample_standard_deviation));
     rt_ratio_mean_phase.SendValue(static_cast<float>(snapshot.statistics.mean_ratio_phase_deg));
+    rt_baseline_sequence.SendValue(snapshot.baseline_sequence);
+    rt_baseline_progress.SendValue(snapshot.baseline_progress);
+    rt_baseline_complete.SendValue(snapshot.baseline_complete);
+    rt_baseline_valid.SendValue(snapshot.baseline_valid);
+    rt_resonance_count.SendValue(snapshot.resonance_count);
+    rt_resonance_selected.SendValue(snapshot.resonance_selected);
+    rt_resonance_frequency.SendValue(snapshot.resonance_frequency_hz);
+    rt_resonance_q.SendValue(snapshot.resonance_q);
+    rt_resonance_fwhm.SendValue(snapshot.resonance_fwhm_hz);
+    rt_resonance_se.SendValue(snapshot.resonance_se_hz);
+    rt_resonance_quality.SendValue(snapshot.resonance_model_quality);
+    rt_resonance_model_valid.SendValue(snapshot.resonance_model_valid);
+    rt_diag_sequence.SendValue(snapshot.diagnostic_sequence);
+    rt_diag_sensor.SendValue(snapshot.diagnostic_sensor_id);
+    rt_diag_complete.SendValue(snapshot.diagnostic_complete);
 }
 
 void UpdateSignals(void)
@@ -383,6 +769,18 @@ void UpdateSignals(void)
     rt_history_frequency.Set(snapshot.history_frequency);
     rt_history_inc_mag.Set(snapshot.history_inc_mag);
     rt_history_ref_mag.Set(snapshot.history_ref_mag);
+    rt_baseline_signal_sequence.Set(std::vector<float>{static_cast<float>(snapshot.baseline_sequence)});
+    rt_baseline_frequency.Set(snapshot.baseline_frequency);
+    rt_baseline_real.Set(snapshot.baseline_real);
+    rt_baseline_imag.Set(snapshot.baseline_imag);
+    rt_candidate_left.Set(snapshot.candidate_left);
+    rt_candidate_right.Set(snapshot.candidate_right);
+    rt_candidate_score.Set(snapshot.candidate_score);
+    rt_diag_signal_sequence.Set(std::vector<float>{static_cast<float>(snapshot.diagnostic_sequence)});
+    rt_diag_offset.Set(snapshot.diagnostic_offset);
+    rt_diag_frequency.Set(snapshot.diagnostic_frequency);
+    rt_diag_real.Set(snapshot.diagnostic_real);
+    rt_diag_imag.Set(snapshot.diagnostic_imag);
 }
 
 void UpdateBinarySignals(void) {}
@@ -393,6 +791,9 @@ void OnNewParams(void)
 {
     if (rt_run.IsNewValue()) {
         rt_run.Update();
+        if (rt_run.Value()) {
+            request_operation(RequestedOperation::Idle);
+        }
         run_requested.store(rt_run.Value());
         std::fprintf(stderr, "[resonance_tracker] RT_RUN=%d\n", rt_run.Value() ? 1 : 0);
     }
@@ -410,6 +811,36 @@ void OnNewParams(void)
     if (rt_window_shift.IsNewValue()) {
         rt_window_shift.Update();
         requested_window_shift.store(rt_window_shift.Value());
+    }
+    if (rt_baseline_start.IsNewValue()) {
+        rt_baseline_start.Update();
+        baseline_start_hz.store(rt_baseline_start.Value());
+    }
+    if (rt_baseline_stop.IsNewValue()) {
+        rt_baseline_stop.Update();
+        baseline_stop_hz.store(rt_baseline_stop.Value());
+    }
+    if (rt_baseline_sensors.IsNewValue()) {
+        rt_baseline_sensors.Update();
+        baseline_sensor_count.store(rt_baseline_sensors.Value());
+    }
+    if (rt_command.IsNewValue()) rt_command.Update();
+    if (rt_command_sequence.IsNewValue()) {
+        rt_command_sequence.Update();
+        const int sequence = rt_command_sequence.Value();
+        const auto command = static_cast<WebCommand>(rt_command.Value());
+        if (command == WebCommand::StartBaseline) {
+            run_requested.store(false);
+            request_operation(RequestedOperation::Baseline);
+        } else if (command == WebCommand::CancelBaseline) {
+            request_operation(RequestedOperation::Idle);
+        } else if (command == WebCommand::StartDiagnostics) {
+            run_requested.store(false);
+            request_operation(RequestedOperation::Diagnostics);
+        } else if (command == WebCommand::CancelDiagnostics) {
+            request_operation(RequestedOperation::Idle);
+        }
+        acknowledge_command(sequence);
     }
 }
 
