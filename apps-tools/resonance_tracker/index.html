@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Resonance Tracker</title>
     <link rel="stylesheet" href="../assets/bootstrap/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/style.css?v=2a4">
+    <link rel="stylesheet" href="css/style.css?v=2a5">
     <script src="../assets/jquery/jquery-2.1.3.min.js"></script>
     <script src="../assets/pako.js"></script>
     <script src="../assets/js/rpDataParser.js"></script>
@@ -84,7 +84,7 @@
                 <div class="section-head"><div><h2>Baseline and resonance fit</h2><p id="baseline-summary">No completed baseline is available.</p></div><span><b id="baseline-progress">0.0</b>%</span></div>
                 <div class="fit-grid"><div><span>Frequency</span><strong id="resonance-frequency">-</strong><small>Hz</small></div><div><span>Q</span><strong id="resonance-q">-</strong></div><div><span>FWHM</span><strong id="resonance-fwhm">-</strong><small>Hz</small></div><div><span>Frequency SE</span><strong id="resonance-se">-</strong><small>Hz</small></div><div><span>Model quality</span><strong id="resonance-quality">-</strong></div></div>
                 <canvas id="baseline-plot" width="900" height="300"></canvas>
-                <div class="plot-legend"><span class="legend-baseline">Overview |R|</span><span class="legend-candidate">Candidate regions</span><span class="legend-refine">Refinement samples</span><span class="legend-model">Complex fitted model</span><span class="legend-center">Fitted center / FWHM</span></div>
+                <div class="plot-legend"><span class="legend-baseline">Overview |R|</span><span class="legend-filtered">Filtered |R|</span><span class="legend-inflection">Selected inflection points</span><span class="legend-candidate">Candidate regions</span><span class="legend-refine">Refinement samples</span><span class="legend-model">Complex fitted model</span><span class="legend-center">Fitted center / FWHM</span></div>
             </section>
         </section>
         <section id="dashboard-diagnostics" class="dashboard" hidden>
@@ -95,13 +95,13 @@
             <div class="empty-dashboard"><span>Milestone 2B</span><h2>Tracking</h2><p id="tracking-summary">Continuous tracking is not active.</p></div>
         </section>
     </main>
-    <script src="js/state.js?v=2a4"></script>
-    <script src="js/transport.js?v=2a4"></script>
-    <script src="js/dashboards/stopped.js?v=2a4"></script>
-    <script src="js/dashboards/raw_iq.js?v=2a4"></script>
-    <script src="js/dashboards/baseline.js?v=2a4"></script>
-    <script src="js/dashboards/diagnostics.js?v=2a4"></script>
-    <script src="js/dashboards/tracking.js?v=2a4"></script>
-    <script src="js/app.js?v=2a4"></script>
+    <script src="js/state.js?v=2a5"></script>
+    <script src="js/transport.js?v=2a5"></script>
+    <script src="js/dashboards/stopped.js?v=2a5"></script>
+    <script src="js/dashboards/raw_iq.js?v=2a5"></script>
+    <script src="js/dashboards/baseline.js?v=2a5"></script>
+    <script src="js/dashboards/diagnostics.js?v=2a5"></script>
+    <script src="js/dashboards/tracking.js?v=2a5"></script>
+    <script src="js/app.js?v=2a5"></script>
 </body>
 </html>

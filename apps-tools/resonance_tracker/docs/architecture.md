@@ -117,13 +117,19 @@ Baseline/result scalars:
 
 Baseline signals:
 
-- `RT_BASELINE_FREQUENCY`, `RT_BASELINE_RE`, `RT_BASELINE_IM`.
+- `RT_BASELINE_FREQUENCY`, `RT_BASELINE_RE`, `RT_BASELINE_IM`, and
+  `RT_BASELINE_FILTERED_MAG`. The filtered-magnitude array is aligned with the
+  overview arrays; its unused radius samples at each edge are zero and are not
+  plotted.
 - `RT_BASELINE_SIGNAL_SEQUENCE` is a one-element signal and must equal
   `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
 - `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
-  `RT_CANDIDATE_SCORE`. Inflection and extrema candidates are accepted only
-  when their derived `frequency/FWHM` lies in the temporary expected range
-  50-150.
+  `RT_CANDIDATE_SCORE`, and `RT_CANDIDATE_IS_INFLECTION`. Inflection and extrema
+  candidates are accepted only when their derived `frequency/FWHM` lies in the
+  temporary expected range 50-150. For selected inflection-pair candidates, the
+  browser interpolates `RT_BASELINE_FILTERED_MAG` at the published left/right
+  frequencies to mark the exact selected curvature crossings. Extrema-fallback
+  boundaries are not labelled as inflection points.
 - `RT_REFINE_SENSOR_ID`, `RT_REFINE_FREQUENCY_HZ`, `RT_REFINE_RE`, and
   `RT_REFINE_IM` publish measured dense-refinement points.
 - `RT_MODEL_SENSOR_ID`, `RT_MODEL_FREQUENCY_HZ`, `RT_MODEL_RE`, and

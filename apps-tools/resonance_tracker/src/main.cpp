@@ -117,9 +117,11 @@ CFloatSignal rt_baseline_frequency("RT_BASELINE_FREQUENCY", kBaselineSignalSize,
 CFloatSignal rt_baseline_signal_sequence("RT_BASELINE_SIGNAL_SEQUENCE", 1, 0.0f);
 CFloatSignal rt_baseline_real("RT_BASELINE_RE", kBaselineSignalSize, 0.0f);
 CFloatSignal rt_baseline_imag("RT_BASELINE_IM", kBaselineSignalSize, 0.0f);
+CFloatSignal rt_baseline_filtered_magnitude("RT_BASELINE_FILTERED_MAG", kBaselineSignalSize, 0.0f);
 CFloatSignal rt_candidate_left("RT_CANDIDATE_LEFT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_right("RT_CANDIDATE_RIGHT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_score("RT_CANDIDATE_SCORE", 2, 0.0f);
+CFloatSignal rt_candidate_is_inflection("RT_CANDIDATE_IS_INFLECTION", 2, 0.0f);
 CFloatSignal rt_refine_sensor_id("RT_REFINE_SENSOR_ID", kRefinementSignalSize, 0.0f);
 CFloatSignal rt_refine_frequency("RT_REFINE_FREQUENCY_HZ", kRefinementSignalSize, 0.0f);
 CFloatSignal rt_refine_real("RT_REFINE_RE", kRefinementSignalSize, 0.0f);
@@ -194,9 +196,11 @@ struct TelemetrySnapshot {
     std::vector<float> baseline_frequency;
     std::vector<float> baseline_real;
     std::vector<float> baseline_imag;
+    std::vector<float> baseline_filtered_magnitude;
     std::vector<float> candidate_left;
     std::vector<float> candidate_right;
     std::vector<float> candidate_score;
+    std::vector<float> candidate_is_inflection;
     std::vector<float> refine_sensor_id;
     std::vector<float> refine_frequency;
     std::vector<float> refine_real;
@@ -299,18 +303,24 @@ void publish_baseline(const BaselineResult& result)
     telemetry.baseline_frequency.clear();
     telemetry.baseline_real.clear();
     telemetry.baseline_imag.clear();
+    telemetry.baseline_filtered_magnitude.clear();
     for (const auto& point : result.overview) {
         telemetry.baseline_frequency.push_back(static_cast<float>(point.effective_frequency_hz));
         telemetry.baseline_real.push_back(static_cast<float>(point.real));
         telemetry.baseline_imag.push_back(static_cast<float>(point.imag));
     }
+    for (double magnitude_squared : result.smoothed_magnitude_squared)
+        telemetry.baseline_filtered_magnitude.push_back(
+            static_cast<float>(std::sqrt(std::max(0.0, magnitude_squared))));
     telemetry.candidate_left.clear();
     telemetry.candidate_right.clear();
     telemetry.candidate_score.clear();
+    telemetry.candidate_is_inflection.clear();
     for (const auto& candidate : result.candidates) {
         telemetry.candidate_left.push_back(static_cast<float>(candidate.left_frequency_hz));
         telemetry.candidate_right.push_back(static_cast<float>(candidate.right_frequency_hz));
         telemetry.candidate_score.push_back(static_cast<float>(candidate.score));
+        telemetry.candidate_is_inflection.push_back(candidate.from_inflection_pair ? 1.0f : 0.0f);
     }
     telemetry.refine_sensor_id.clear();
     telemetry.refine_frequency.clear();
@@ -492,9 +502,11 @@ void acquisition_loop()
                 telemetry.baseline_frequency.clear();
                 telemetry.baseline_real.clear();
                 telemetry.baseline_imag.clear();
+                telemetry.baseline_filtered_magnitude.clear();
                 telemetry.candidate_left.clear();
                 telemetry.candidate_right.clear();
                 telemetry.candidate_score.clear();
+                telemetry.candidate_is_inflection.clear();
                 telemetry.refine_sensor_id.clear();
                 telemetry.refine_frequency.clear();
                 telemetry.refine_real.clear();
@@ -856,9 +868,11 @@ void UpdateSignals(void)
     rt_baseline_frequency.Set(snapshot.baseline_frequency);
     rt_baseline_real.Set(snapshot.baseline_real);
     rt_baseline_imag.Set(snapshot.baseline_imag);
+    rt_baseline_filtered_magnitude.Set(snapshot.baseline_filtered_magnitude);
     rt_candidate_left.Set(snapshot.candidate_left);
     rt_candidate_right.Set(snapshot.candidate_right);
     rt_candidate_score.Set(snapshot.candidate_score);
+    rt_candidate_is_inflection.Set(snapshot.candidate_is_inflection);
     rt_refine_sensor_id.Set(snapshot.refine_sensor_id);
     rt_refine_frequency.Set(snapshot.refine_frequency);
     rt_refine_real.Set(snapshot.refine_real);

@@ -42,6 +42,7 @@ struct BaselineConfig {
 };
 
 struct ResonanceCandidate {
+    bool from_inflection_pair = false;
     double left_frequency_hz = 0.0;
     double right_frequency_hz = 0.0;
     double frequency_hz = 0.0;

@@ -573,6 +573,7 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
             if (left > 0.0 && right <= 0.0) {
                 const double right_index = i - left / (right - left);
                 ResonanceCandidate candidate;
+                candidate.from_inflection_pair = true;
                 candidate.left_frequency_hz = start + left_index * step;
                 candidate.right_frequency_hz = start + right_index * step;
                 candidate.frequency_hz = start + 0.5 * (left_index + right_index) * step;

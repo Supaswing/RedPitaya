@@ -15,9 +15,11 @@
         const frequency = values('RT_BASELINE_FREQUENCY');
         const real = values('RT_BASELINE_RE');
         const imag = values('RT_BASELINE_IM');
+        const filteredMagnitude = values('RT_BASELINE_FILTERED_MAG');
         const candidateLeft = values('RT_CANDIDATE_LEFT_HZ');
         const candidateRight = values('RT_CANDIDATE_RIGHT_HZ');
         const candidateScore = values('RT_CANDIDATE_SCORE');
+        const candidateIsInflection = values('RT_CANDIDATE_IS_INFLECTION');
         const refineSensor = values('RT_REFINE_SENSOR_ID');
         const refineFrequency = values('RT_REFINE_FREQUENCY_HZ');
         const refineReal = values('RT_REFINE_RE');
@@ -28,6 +30,7 @@
         const modelImag = values('RT_MODEL_IM');
         const fitFrequency = values('RT_FIT_FREQUENCY_HZ');
         const fitFwhm = values('RT_FIT_FWHM_HZ');
+        const filterRadius = Number(tracker.parameter('RT_BASELINE_FILTER_RADIUS', 5));
         const canvas = byId('baseline-plot');
         const context = canvas.getContext('2d');
         context.clearRect(0, 0, canvas.width, canvas.height);
@@ -36,7 +39,9 @@
         const magnitude = real.map(function (value, index) { return Math.hypot(value, imag[index]); });
         const refineMagnitude = refineReal.map(function (value, index) { return Math.hypot(value, refineImag[index]); });
         const modelMagnitude = modelReal.map(function (value, index) { return Math.hypot(value, modelImag[index]); });
-        const allMagnitude = magnitude.concat(refineMagnitude, modelMagnitude).filter(Number.isFinite);
+        const filteredForScale = filteredMagnitude.length === frequency.length ?
+            filteredMagnitude.slice(filterRadius, filteredMagnitude.length - filterRadius) : [];
+        const allMagnitude = magnitude.concat(refineMagnitude, modelMagnitude, filteredForScale).filter(Number.isFinite);
         const minimum = Math.min.apply(null, allMagnitude);
         const maximum = Math.max.apply(null, allMagnitude);
         const span = maximum - minimum || 1;
@@ -46,6 +51,17 @@
         const left = 42, right = canvas.width - 14, top = 18, bottom = canvas.height - 28;
         const x = function (value) { return left + (Number(value) - xMinimum) / xSpan * (right - left); };
         const y = function (value) { return bottom - (Number(value) - minimum) / span * (bottom - top); };
+
+        function filteredAt(targetFrequency) {
+            if (filteredMagnitude.length !== frequency.length) return NaN;
+            const position = (Number(targetFrequency) - xMinimum) / xSpan * (filteredMagnitude.length - 1);
+            if (position < 0 || position > filteredMagnitude.length - 1) return NaN;
+            const lower = Math.floor(position);
+            const upper = Math.min(lower + 1, filteredMagnitude.length - 1);
+            const fraction = position - lower;
+            return Number(filteredMagnitude[lower]) + fraction *
+                (Number(filteredMagnitude[upper]) - Number(filteredMagnitude[lower]));
+        }
 
         context.font = '11px monospace';
         context.fillStyle = '#8d9d98';
@@ -97,6 +113,26 @@
         }
 
         line(frequency, magnitude, '#d5f36a', false, false);
+        if (filteredMagnitude.length === frequency.length && frequency.length > 2 * filterRadius) {
+            line(frequency.slice(filterRadius, frequency.length - filterRadius),
+                filteredMagnitude.slice(filterRadius, filteredMagnitude.length - filterRadius),
+                '#ffffff', true, false);
+        }
+        candidateLeft.forEach(function (leftFrequency, index) {
+            if (index >= candidateRight.length || Number(candidateIsInflection[index]) !== 1) return;
+            [leftFrequency, candidateRight[index]].forEach(function (pointFrequency) {
+                const pointMagnitude = filteredAt(pointFrequency);
+                if (!Number.isFinite(pointMagnitude)) return;
+                const px = x(pointFrequency), py = y(pointMagnitude);
+                context.fillStyle = index ? '#69d7c6' : '#d5f36a';
+                context.strokeStyle = '#101817';
+                context.lineWidth = 1;
+                context.beginPath();
+                context.arc(px, py, 5, 0, 2 * Math.PI);
+                context.fill();
+                context.stroke();
+            });
+        });
         ['#69d7c6', '#9d8cff'].forEach(function (color, sensorIndex) {
             const sensorId = sensorIndex + 1;
             const refineF = [], refineM = [], modelF = [], modelM = [];
