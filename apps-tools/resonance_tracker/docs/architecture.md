@@ -95,6 +95,10 @@ Commands:
   `RT_BASELINE_SENSOR_COUNT`: requested scan configuration. Until physical
   sensor multiplexing is defined, this count means the number of non-overlapping
   resonances to select; IDs are assigned in increasing-frequency order.
+- `RT_BASELINE_OVERVIEW_POINTS` (15-501),
+  `RT_BASELINE_COARSE_AVERAGES` (1-32), `RT_BASELINE_REFINE_POINTS` (5-101),
+  and `RT_BASELINE_REFINE_AVERAGES` (1-32) configure the overview and dense
+  refinement acquisitions. Averaging is coherent complex averaging.
 
 Baseline/result scalars:
 
@@ -115,6 +119,12 @@ Baseline signals:
   `RT_BASELINE_SEQUENCE` before the browser combines these arrays.
 - `RT_CANDIDATE_LEFT_HZ`, `RT_CANDIDATE_RIGHT_HZ`,
   `RT_CANDIDATE_SCORE`.
+- `RT_REFINE_SENSOR_ID`, `RT_REFINE_FREQUENCY_HZ`, `RT_REFINE_RE`, and
+  `RT_REFINE_IM` publish measured dense-refinement points.
+- `RT_MODEL_SENSOR_ID`, `RT_MODEL_FREQUENCY_HZ`, `RT_MODEL_RE`, and
+  `RT_MODEL_IM` publish the complex fitted model at those points when the
+  primary model is valid. `RT_FIT_FREQUENCY_HZ` and `RT_FIT_FWHM_HZ` mark each
+  fitted center and width, including curvature-fallback results.
 
 Diagnostics scalars/signals:
 
@@ -134,7 +144,8 @@ is bounded to 128 points. Baseline has exactly 101 overview points and
 diagnostics exactly five points. Hidden dashboards receive no render calls and
 own no timers.
 
-`RT_WINDOW_SHIFT` is global hardware acquisition configuration. In `RAW_IQ`, a
+`RT_WINDOW_SHIFT` is global hardware acquisition configuration and its control
+is displayed in the application header. In `RAW_IQ`, a
 change is applied and read back before the next published measurement and resets
 rolling statistics. In an idle or baseline-ready state, it remains requested
 configuration until the next raw, baseline, or diagnostics operation starts.

@@ -29,7 +29,8 @@ constexpr int kDefaultWindowShift = 17;
 constexpr int kDefaultPeriodCount = 0;
 constexpr std::size_t kStatisticsSize = 128;
 constexpr double kFpgaClockHz = 125000000.0;
-constexpr std::size_t kBaselineSignalSize = 101;
+constexpr std::size_t kBaselineSignalSize = 501;
+constexpr std::size_t kRefinementSignalSize = 202;
 constexpr std::size_t kDiagnosticSignalSize = 5;
 
 enum class RequestedOperation {
@@ -56,6 +57,11 @@ CIntParameter rt_command_ack("RT_COMMAND_ACK", CBaseParameter::RO, 0, 0, 0, 2147
 CIntParameter rt_baseline_start("RT_BASELINE_START_HZ", CBaseParameter::RW, 30000000, 0, 1, 62500000);
 CIntParameter rt_baseline_stop("RT_BASELINE_STOP_HZ", CBaseParameter::RW, 34000000, 0, 1, 62500000);
 CIntParameter rt_baseline_sensors("RT_BASELINE_SENSOR_COUNT", CBaseParameter::RW, 1, 0, 1, 2);
+CIntParameter rt_baseline_overview_points("RT_BASELINE_OVERVIEW_POINTS", CBaseParameter::RW, 101, 0, 15,
+                                          kBaselineSignalSize);
+CIntParameter rt_baseline_coarse_averages("RT_BASELINE_COARSE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
+CIntParameter rt_baseline_refine_points("RT_BASELINE_REFINE_POINTS", CBaseParameter::RW, 21, 0, 5, 101);
+CIntParameter rt_baseline_refine_averages("RT_BASELINE_REFINE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
 CIntParameter rt_state("RT_STATE", CBaseParameter::RO, kStopped, 0, kStopped, kError);
 CStringParameter rt_error("RT_ERROR", CBaseParameter::RO, "", 0);
 CIntParameter rt_sequence("RT_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
@@ -113,6 +119,16 @@ CFloatSignal rt_baseline_imag("RT_BASELINE_IM", kBaselineSignalSize, 0.0f);
 CFloatSignal rt_candidate_left("RT_CANDIDATE_LEFT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_right("RT_CANDIDATE_RIGHT_HZ", 2, 0.0f);
 CFloatSignal rt_candidate_score("RT_CANDIDATE_SCORE", 2, 0.0f);
+CFloatSignal rt_refine_sensor_id("RT_REFINE_SENSOR_ID", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_refine_frequency("RT_REFINE_FREQUENCY_HZ", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_refine_real("RT_REFINE_RE", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_refine_imag("RT_REFINE_IM", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_model_sensor_id("RT_MODEL_SENSOR_ID", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_model_frequency("RT_MODEL_FREQUENCY_HZ", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_model_real("RT_MODEL_RE", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_model_imag("RT_MODEL_IM", kRefinementSignalSize, 0.0f);
+CFloatSignal rt_fit_frequency("RT_FIT_FREQUENCY_HZ", 2, 0.0f);
+CFloatSignal rt_fit_fwhm("RT_FIT_FWHM_HZ", 2, 0.0f);
 CFloatSignal rt_diag_offset("RT_DIAG_OFFSET", kDiagnosticSignalSize, 0.0f);
 CFloatSignal rt_diag_signal_sequence("RT_DIAG_SIGNAL_SEQUENCE", 1, 0.0f);
 CFloatSignal rt_diag_frequency("RT_DIAG_FREQUENCY_HZ", kDiagnosticSignalSize, 0.0f);
@@ -180,6 +196,16 @@ struct TelemetrySnapshot {
     std::vector<float> candidate_left;
     std::vector<float> candidate_right;
     std::vector<float> candidate_score;
+    std::vector<float> refine_sensor_id;
+    std::vector<float> refine_frequency;
+    std::vector<float> refine_real;
+    std::vector<float> refine_imag;
+    std::vector<float> model_sensor_id;
+    std::vector<float> model_frequency;
+    std::vector<float> model_real;
+    std::vector<float> model_imag;
+    std::vector<float> fit_frequency;
+    std::vector<float> fit_fwhm;
     int diagnostic_sequence = 0;
     int diagnostic_sensor_id = 0;
     bool diagnostic_complete = false;
@@ -199,6 +225,10 @@ std::atomic<int> requested_window_shift{kDefaultWindowShift};
 std::atomic<int> baseline_start_hz{30000000};
 std::atomic<int> baseline_stop_hz{34000000};
 std::atomic<int> baseline_sensor_count{1};
+std::atomic<int> baseline_overview_points{101};
+std::atomic<int> baseline_coarse_averages{3};
+std::atomic<int> baseline_refine_points{21};
+std::atomic<int> baseline_refine_averages{3};
 std::mutex operation_mutex;
 RequestedOperation requested_operation = RequestedOperation::Idle;
 std::uint64_t operation_generation = 0;
@@ -279,6 +309,32 @@ void publish_baseline(const BaselineResult& result)
         telemetry.candidate_left.push_back(static_cast<float>(candidate.left_frequency_hz));
         telemetry.candidate_right.push_back(static_cast<float>(candidate.right_frequency_hz));
         telemetry.candidate_score.push_back(static_cast<float>(candidate.score));
+    }
+    telemetry.refine_sensor_id.clear();
+    telemetry.refine_frequency.clear();
+    telemetry.refine_real.clear();
+    telemetry.refine_imag.clear();
+    telemetry.model_sensor_id.clear();
+    telemetry.model_frequency.clear();
+    telemetry.model_real.clear();
+    telemetry.model_imag.clear();
+    telemetry.fit_frequency.clear();
+    telemetry.fit_fwhm.clear();
+    for (const auto& resonance : result.resonances) {
+        telemetry.fit_frequency.push_back(static_cast<float>(resonance.frequency_hz));
+        telemetry.fit_fwhm.push_back(static_cast<float>(resonance.fwhm_hz));
+        for (const auto& point : resonance.refinement) {
+            telemetry.refine_sensor_id.push_back(static_cast<float>(resonance.sensor_id));
+            telemetry.refine_frequency.push_back(static_cast<float>(point.effective_frequency_hz));
+            telemetry.refine_real.push_back(static_cast<float>(point.real));
+            telemetry.refine_imag.push_back(static_cast<float>(point.imag));
+        }
+        for (const auto& point : resonance.model) {
+            telemetry.model_sensor_id.push_back(static_cast<float>(resonance.sensor_id));
+            telemetry.model_frequency.push_back(static_cast<float>(point.effective_frequency_hz));
+            telemetry.model_real.push_back(static_cast<float>(point.real));
+            telemetry.model_imag.push_back(static_cast<float>(point.imag));
+        }
     }
     if (!result.resonances.empty()) {
         const auto& resonance = result.resonances.front();
@@ -437,11 +493,25 @@ void acquisition_loop()
                 telemetry.candidate_left.clear();
                 telemetry.candidate_right.clear();
                 telemetry.candidate_score.clear();
+                telemetry.refine_sensor_id.clear();
+                telemetry.refine_frequency.clear();
+                telemetry.refine_real.clear();
+                telemetry.refine_imag.clear();
+                telemetry.model_sensor_id.clear();
+                telemetry.model_frequency.clear();
+                telemetry.model_real.clear();
+                telemetry.model_imag.clear();
+                telemetry.fit_frequency.clear();
+                telemetry.fit_fwhm.clear();
             }
             BaselineConfig config;
             config.start_frequency_hz = static_cast<std::uint32_t>(baseline_start_hz.load());
             config.stop_frequency_hz = static_cast<std::uint32_t>(baseline_stop_hz.load());
             config.sensor_count = static_cast<std::size_t>(baseline_sensor_count.load());
+            config.overview_points = static_cast<std::size_t>(baseline_overview_points.load());
+            config.coarse_averages = static_cast<std::size_t>(baseline_coarse_averages.load());
+            config.refine_points = static_cast<std::size_t>(baseline_refine_points.load());
+            config.refine_averages = static_cast<std::size_t>(baseline_refine_averages.load());
             bool finding_state_entered = false;
             BaselineResult result = baseline_analyzer.acquire(
                 ++baseline_sequence, config, measurement_source,
@@ -654,6 +724,10 @@ extern "C" int rp_app_init(void)
     baseline_start_hz.store(30000000);
     baseline_stop_hz.store(34000000);
     baseline_sensor_count.store(1);
+    baseline_overview_points.store(101);
+    baseline_coarse_averages.store(3);
+    baseline_refine_points.store(21);
+    baseline_refine_averages.store(3);
     {
         std::lock_guard<std::mutex> lock(operation_mutex);
         requested_operation = RequestedOperation::Idle;
@@ -699,6 +773,10 @@ void UpdateParams(void)
     rt_baseline_start.SendValue(baseline_start_hz.load());
     rt_baseline_stop.SendValue(baseline_stop_hz.load());
     rt_baseline_sensors.SendValue(baseline_sensor_count.load());
+    rt_baseline_overview_points.SendValue(baseline_overview_points.load());
+    rt_baseline_coarse_averages.SendValue(baseline_coarse_averages.load());
+    rt_baseline_refine_points.SendValue(baseline_refine_points.load());
+    rt_baseline_refine_averages.SendValue(baseline_refine_averages.load());
     rt_state.SendValue(snapshot.state);
     rt_error.SendValue(snapshot.error);
     rt_sequence.SendValue(snapshot.sequence);
@@ -776,6 +854,16 @@ void UpdateSignals(void)
     rt_candidate_left.Set(snapshot.candidate_left);
     rt_candidate_right.Set(snapshot.candidate_right);
     rt_candidate_score.Set(snapshot.candidate_score);
+    rt_refine_sensor_id.Set(snapshot.refine_sensor_id);
+    rt_refine_frequency.Set(snapshot.refine_frequency);
+    rt_refine_real.Set(snapshot.refine_real);
+    rt_refine_imag.Set(snapshot.refine_imag);
+    rt_model_sensor_id.Set(snapshot.model_sensor_id);
+    rt_model_frequency.Set(snapshot.model_frequency);
+    rt_model_real.Set(snapshot.model_real);
+    rt_model_imag.Set(snapshot.model_imag);
+    rt_fit_frequency.Set(snapshot.fit_frequency);
+    rt_fit_fwhm.Set(snapshot.fit_fwhm);
     rt_diag_signal_sequence.Set(std::vector<float>{static_cast<float>(snapshot.diagnostic_sequence)});
     rt_diag_offset.Set(snapshot.diagnostic_offset);
     rt_diag_frequency.Set(snapshot.diagnostic_frequency);
@@ -823,6 +911,22 @@ void OnNewParams(void)
     if (rt_baseline_sensors.IsNewValue()) {
         rt_baseline_sensors.Update();
         baseline_sensor_count.store(rt_baseline_sensors.Value());
+    }
+    if (rt_baseline_overview_points.IsNewValue()) {
+        rt_baseline_overview_points.Update();
+        baseline_overview_points.store(rt_baseline_overview_points.Value());
+    }
+    if (rt_baseline_coarse_averages.IsNewValue()) {
+        rt_baseline_coarse_averages.Update();
+        baseline_coarse_averages.store(rt_baseline_coarse_averages.Value());
+    }
+    if (rt_baseline_refine_points.IsNewValue()) {
+        rt_baseline_refine_points.Update();
+        baseline_refine_points.store(rt_baseline_refine_points.Value());
+    }
+    if (rt_baseline_refine_averages.IsNewValue()) {
+        rt_baseline_refine_averages.Update();
+        baseline_refine_averages.store(rt_baseline_refine_averages.Value());
     }
     if (rt_command.IsNewValue()) rt_command.Update();
     if (rt_command_sequence.IsNewValue()) {

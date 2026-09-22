@@ -46,9 +46,6 @@
         byId('frequency').addEventListener('change', function () {
             tracker.transport.send({RT_FREQUENCY_HZ: {value: Number(byId('frequency').value)}});
         });
-        byId('window-shift').addEventListener('change', function () {
-            tracker.transport.send({RT_WINDOW_SHIFT: {value: Number(byId('window-shift').value)}});
-        });
         byId('interval').addEventListener('change', function () {
             tracker.transport.send({RT_TELEMETRY_MS: {value: Number(byId('interval').value)}});
         });
@@ -57,7 +54,6 @@
     function update(snapshot) {
         const running = Boolean(tracker.parameter('RT_RUN', false));
         const state = Number(tracker.parameter('RT_STATE', 0));
-        const acquisitionLocked = state === 2 || state === 4 || state === 5 || (state >= 6 && state <= 9);
         byId('state').textContent = tracker.stateName(state);
         byId('error').textContent = tracker.parameter('RT_ERROR', '') || 'No backend error';
         byId('sequence').textContent = tracker.parameter('RT_SEQUENCE', 0);
@@ -71,10 +67,8 @@
         byId('run').textContent = running ? 'STOP' : 'RUN';
         byId('run').className = running ? 'stop' : 'run';
         byId('run').disabled = state !== 0 && state !== 1 && state !== 10;
-        byId('frequency').disabled = acquisitionLocked;
-        byId('window-shift').disabled = acquisitionLocked;
+        byId('frequency').disabled = state === 2 || state === 4 || state === 5 || (state >= 6 && state <= 9);
         if (document.activeElement !== byId('frequency')) byId('frequency').value = tracker.parameter('RT_FREQUENCY_HZ', 32000000);
-        if (document.activeElement !== byId('window-shift')) byId('window-shift').value = tracker.parameter('RT_WINDOW_SHIFT', 17);
         if (document.activeElement !== byId('interval')) byId('interval').value = tracker.parameter('RT_TELEMETRY_MS', 50);
         number('integration-samples', 'RT_INTEGRATION_SAMPLES', 0, true);
         number('integration-time', 'RT_INTEGRATION_TIME_US', 3, true);

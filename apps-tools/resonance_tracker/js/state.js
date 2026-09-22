@@ -41,6 +41,17 @@
         const banner = document.getElementById('global-error');
         banner.hidden = !error;
         banner.textContent = error;
+        const windowShift = document.getElementById('window-shift');
+        const requestedShift = Number(parameter('RT_WINDOW_SHIFT', 17));
+        if (windowShift.dataset.pending !== undefined) {
+            if (requestedShift === Number(windowShift.dataset.pending)) delete windowShift.dataset.pending;
+        }
+        if (windowShift.dataset.pending === undefined && document.activeElement !== windowShift)
+            windowShift.value = requestedShift;
+        windowShift.disabled = nextState === 2 || nextState === 4 || nextState === 5 ||
+            (nextState >= 6 && nextState <= 9);
+        document.getElementById('global-integration-samples').textContent =
+            Number(parameter('RT_INTEGRATION_SAMPLES', 131072)).toFixed(0);
         if (nextState !== store.instrumentState) {
             store.instrumentState = nextState;
             if (nextState !== 10 && defaultViews[nextState]) setActiveView(defaultViews[nextState]);

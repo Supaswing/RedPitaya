@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Resonance Tracker</title>
     <link rel="stylesheet" href="../assets/bootstrap/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/style.css?v=2a2">
+    <link rel="stylesheet" href="css/style.css?v=2a3">
     <script src="../assets/jquery/jquery-2.1.3.min.js"></script>
     <script src="../assets/pako.js"></script>
     <script src="../assets/js/rpDataParser.js"></script>
 </head>
 <body>
     <main class="tracker-shell">
-        <header class="topbar"><div><span class="kicker">RED PITAYA / VNA</span><h1>Resonance Tracker</h1><p class="placeholder">Coherent I/Q acquisition and resonance diagnostics.</p></div><div class="status-stack"><div id="instrument-state" class="status">STOPPED</div><div id="connection" class="status">STARTING</div></div></header>
+        <header class="topbar"><div><span class="kicker">RED PITAYA / VNA</span><h1>Resonance Tracker</h1><p class="placeholder">Coherent I/Q acquisition and resonance diagnostics.</p></div><div class="header-controls"><label class="global-control">Global window shift<input id="window-shift" type="number" min="0" max="20" step="1" value="17"><small>applied: <b id="global-integration-samples">131072</b> samples</small></label><div class="status-stack"><div id="instrument-state" class="status">STOPPED</div><div id="connection" class="status">STARTING</div></div></div></header>
         <div id="global-error" class="error-banner" hidden></div>
         <nav class="dashboard-nav" aria-label="Dashboard">
             <button type="button" data-view="stopped">Stopped</button>
@@ -27,7 +27,6 @@
         <section id="dashboard-raw" class="dashboard" hidden>
         <section class="controls">
             <label>Frequency [Hz]<input id="frequency" type="number" min="1" max="62500000" step="1" value="32000000"></label>
-            <label>Window shift<input id="window-shift" type="number" min="0" max="20" step="1" value="17"></label>
             <label>Web interval [ms]<input id="interval" type="number" min="10" max="1000" step="10" value="50"></label>
             <button id="run" class="run">RUN</button>
         </section>
@@ -69,17 +68,22 @@
         <section class="history"><div class="section-head"><h2>Recent magnitude</h2><span>bounded to 128 points</span></div><canvas id="plot" width="900" height="220"></canvas></section>
         </section>
         <section id="dashboard-baseline" class="dashboard" hidden>
-            <section class="controls">
+            <section class="controls baseline-controls">
                 <label>Start frequency [Hz]<input id="baseline-start" type="number" min="1" max="62500000" step="1" value="30000000"></label>
                 <label>Stop frequency [Hz]<input id="baseline-stop" type="number" min="1" max="62500000" step="1" value="34000000"></label>
                 <label>Resonances<input id="baseline-sensors" type="number" min="1" max="2" step="1" value="1"></label>
+                <label>Overview points<input id="baseline-overview-points" type="number" min="15" max="501" step="1" value="101"></label>
+                <label>Coarse averages<input id="baseline-coarse-averages" type="number" min="1" max="32" step="1" value="3"></label>
+                <label>Refine points<input id="baseline-refine-points" type="number" min="5" max="101" step="1" value="21"></label>
+                <label>Refine averages<input id="baseline-refine-averages" type="number" min="1" max="32" step="1" value="3"></label>
                 <button id="baseline-start-button">START BASELINE</button><button id="baseline-cancel-button" class="stop">CANCEL</button>
             </section>
-            <p class="control-note">Start and stop are baseline-scan frequencies, independent of the single-frequency Raw I/Q control. Changes are sent to the backend immediately and are fixed for the duration of a baseline run.</p>
+            <p class="control-note">Start and stop are baseline-scan frequencies, independent of the single-frequency Raw I/Q control. Changes are sent to the backend immediately and are fixed for the duration of a baseline run. Current configuration requires approximately <b id="baseline-measurements">371</b> coherent measurement windows.</p>
             <section class="analysis-panel">
                 <div class="section-head"><div><h2>Baseline and resonance fit</h2><p id="baseline-summary">No completed baseline is available.</p></div><span><b id="baseline-progress">0.0</b>%</span></div>
                 <div class="fit-grid"><div><span>Frequency</span><strong id="resonance-frequency">-</strong><small>Hz</small></div><div><span>Q</span><strong id="resonance-q">-</strong></div><div><span>FWHM</span><strong id="resonance-fwhm">-</strong><small>Hz</small></div><div><span>Frequency SE</span><strong id="resonance-se">-</strong><small>Hz</small></div><div><span>Model quality</span><strong id="resonance-quality">-</strong></div></div>
                 <canvas id="baseline-plot" width="900" height="300"></canvas>
+                <div class="plot-legend"><span class="legend-baseline">Overview |R|</span><span class="legend-candidate">Candidate regions</span><span class="legend-refine">Refinement samples</span><span class="legend-model">Complex fitted model</span><span class="legend-center">Fitted center / FWHM</span></div>
             </section>
         </section>
         <section id="dashboard-diagnostics" class="dashboard" hidden>
@@ -90,13 +94,13 @@
             <div class="empty-dashboard"><span>Milestone 2B</span><h2>Tracking</h2><p id="tracking-summary">Continuous tracking is not active.</p></div>
         </section>
     </main>
-    <script src="js/state.js?v=2a2"></script>
-    <script src="js/transport.js?v=2a2"></script>
-    <script src="js/dashboards/stopped.js?v=2a2"></script>
-    <script src="js/dashboards/raw_iq.js?v=2a2"></script>
-    <script src="js/dashboards/baseline.js?v=2a2"></script>
-    <script src="js/dashboards/diagnostics.js?v=2a2"></script>
-    <script src="js/dashboards/tracking.js?v=2a2"></script>
-    <script src="js/app.js?v=2a2"></script>
+    <script src="js/state.js?v=2a3"></script>
+    <script src="js/transport.js?v=2a3"></script>
+    <script src="js/dashboards/stopped.js?v=2a3"></script>
+    <script src="js/dashboards/raw_iq.js?v=2a3"></script>
+    <script src="js/dashboards/baseline.js?v=2a3"></script>
+    <script src="js/dashboards/diagnostics.js?v=2a3"></script>
+    <script src="js/dashboards/tracking.js?v=2a3"></script>
+    <script src="js/app.js?v=2a3"></script>
 </body>
 </html>

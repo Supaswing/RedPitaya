@@ -323,6 +323,30 @@ bool fitComplexModel(const std::vector<ComplexMeasurement>& points, const std::v
     estimate.model_explained_fraction = best_score / base_energy;
     estimate.complex_model_valid = true;
 
+    std::vector<Complex> basis(points.size());
+    for (std::size_t point = 0; point < points.size(); ++point) {
+        const double frequency = start + point * step;
+        const double z = best_orientation * (frequency - best_f0) / best_hwhm;
+        basis[point] = Complex(1.0, -z) / (1.0 + z * z);
+    }
+    std::vector<Complex> projected_basis;
+    removeQuadraticBackground(basis, projected_basis);
+    Complex inner{};
+    double basis_energy = 0.0;
+    for (std::size_t point = 0; point < points.size(); ++point) {
+        inner += std::conj(projected_basis[point]) * residual[point];
+        basis_energy += std::norm(projected_basis[point]);
+    }
+    if (basis_energy >= kEpsilon) {
+        const Complex amplitude = inner / basis_energy;
+        estimate.model.reserve(points.size());
+        for (std::size_t point = 0; point < points.size(); ++point) {
+            const Complex fitted = data[point] - residual[point] + amplitude * projected_basis[point];
+            estimate.model.push_back({points[point].requested_frequency_hz, points[point].effective_frequency_hz,
+                                      fitted.real(), fitted.imag()});
+        }
+    }
+
     if (replicates.size() >= 2) {
         std::vector<double> centers;
         for (const auto& replicate : replicates) {
@@ -558,7 +582,8 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
     result.sequence = sequence;
     result.config = config;
     if (config.start_frequency_hz >= config.stop_frequency_hz || config.overview_points < 15 ||
-        config.refine_points < 5 || config.sensor_count == 0 || config.sensor_count > 2) {
+        config.coarse_averages == 0 || config.refine_points < 5 || config.refine_averages == 0 ||
+        config.sensor_count == 0 || config.sensor_count > 2) {
         result.error = "invalid baseline configuration";
         return result;
     }

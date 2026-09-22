@@ -60,6 +60,7 @@ struct ResonanceEstimate {
     bool complex_model_valid = false;
     ResonanceCandidate candidate;
     std::vector<ComplexMeasurement> refinement;
+    std::vector<ComplexMeasurement> model;
     std::vector<ComplexMeasurement> template_points;
 };
 
