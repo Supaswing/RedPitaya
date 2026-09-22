@@ -23,6 +23,7 @@ constexpr std::size_t kHistorySize = 128;
 constexpr int kDefaultFrequencyHz = 32000000;
 constexpr int kDefaultTelemetryMs = 50;
 constexpr int kDefaultWindowShift = 17;
+constexpr int kDefaultPeriodCount = 0;
 constexpr std::size_t kStatisticsSize = 128;
 constexpr double kFpgaClockHz = 125000000.0;
 
@@ -54,6 +55,7 @@ CIntParameter rt_effective_window_shift("RT_EFFECTIVE_WINDOW_SHIFT", CBaseParame
 CDoubleParameter rt_integration_samples("RT_INTEGRATION_SAMPLES", CBaseParameter::RO, 131072.0, 0, 1.0,
                                         1048576.0);
 CFloatParameter rt_integration_time_us("RT_INTEGRATION_TIME_US", CBaseParameter::RO, 1048.576f, 0, 0, 8388.608f);
+CIntParameter rt_period_count("RT_PERIOD_COUNT", CBaseParameter::RO, kDefaultPeriodCount, 0, 0, 2147483647);
 CIntParameter rt_stats_count("RT_STATS_COUNT", CBaseParameter::RO, 0, 0, 0, kStatisticsSize);
 CIntParameter rt_ratio_stats_count("RT_RATIO_STATS_COUNT", CBaseParameter::RO, 0, 0, 0, kStatisticsSize);
 CBooleanParameter rt_ratio_valid("RT_R_VALID", CBaseParameter::RO, false, 0);
@@ -347,6 +349,7 @@ void UpdateParams(void)
     rt_effective_window_shift.SendValue(snapshot.effective_window_shift);
     rt_integration_samples.SendValue(snapshot.integration_samples);
     rt_integration_time_us.SendValue(snapshot.integration_time_us);
+    rt_period_count.SendValue(kDefaultPeriodCount);
     rt_stats_count.SendValue(static_cast<int>(snapshot.statistics.sample_count));
     rt_ratio_stats_count.SendValue(static_cast<int>(snapshot.statistics.ratio_sample_count));
     rt_ratio_valid.SendValue(snapshot.statistics.ratio_valid);

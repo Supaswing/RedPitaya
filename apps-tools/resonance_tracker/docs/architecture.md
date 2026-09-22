@@ -43,6 +43,8 @@ Browser refresh cannot block measurement timing.
 - `RT_ACQUISITION_RATE_HZ` and `RT_PUBLICATION_RATE_HZ`.
 - `RT_EFFECTIVE_WINDOW_SHIFT`, `RT_INTEGRATION_SAMPLES`, and
   `RT_INTEGRATION_TIME_US` report the verified applied integration setting.
+- `RT_PERIOD_COUNT` reports the currently applied value, fixed at zero until
+  the register behavior is defined.
 - `RT_R_REAL`, `RT_R_IMAG`, `RT_R_MAG`, and `RT_R_PHASE_DEG` describe the
   current complex reflection ratio; `RT_R_VALID` is false for a zero incident
   vector.

@@ -44,6 +44,7 @@
         renderNumber('integration-samples', 'RT_INTEGRATION_SAMPLES', 0, true);
         renderNumber('integration-time', 'RT_INTEGRATION_TIME_US', 3, true);
         byId('effective-window-shift').textContent=value('RT_EFFECTIVE_WINDOW_SHIFT',17);
+        byId('period-count').textContent=value('RT_PERIOD_COUNT',0);
         [['inc-i','RT_INC_I'],['inc-q','RT_INC_Q'],['inc-mag','RT_INC_MAG'],['inc-phase','RT_INC_PHASE_DEG'],['ref-i','RT_REF_I'],['ref-q','RT_REF_Q'],['ref-mag','RT_REF_MAG'],['ref-phase','RT_REF_PHASE_DEG']].forEach(function (x) { const v=value(x[1],'-'); byId(x[0]).textContent=typeof v==='number'?v.toFixed(x[1].includes('PHASE')||x[1].includes('MAG')?3:0):v; });
         const sampleCount = Number(value('RT_STATS_COUNT', 0));
         const ratioCount = Number(value('RT_RATIO_STATS_COUNT', 0));
