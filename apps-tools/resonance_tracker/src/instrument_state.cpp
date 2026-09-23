@@ -84,6 +84,23 @@ StateTransitionResult InstrumentStateMachine::apply(InstrumentCommand command, c
             if (state_ == InstrumentState::Diagnostics)
                 return accept(baseline_valid_ ? InstrumentState::BaselineReady : InstrumentState::Stopped);
             return reject("there is no diagnostics acquisition to complete or cancel");
+        case InstrumentCommand::StartTracking:
+            if (state_ == InstrumentState::BaselineReady && baseline_valid_)
+                return accept(InstrumentState::Tracking);
+            return reject("tracking requires a valid completed baseline");
+        case InstrumentCommand::TrackingGood:
+            if (state_ == InstrumentState::Tracking || state_ == InstrumentState::Degraded)
+                return accept(InstrumentState::Tracking);
+            return reject("tracking update cannot complete from " + std::string(instrumentStateName(state_)));
+        case InstrumentCommand::TrackingPoor:
+            if (state_ == InstrumentState::Tracking || state_ == InstrumentState::Degraded)
+                return accept(InstrumentState::Degraded);
+            return reject("degraded update cannot complete from " + std::string(instrumentStateName(state_)));
+        case InstrumentCommand::StopTracking:
+            if (state_ == InstrumentState::Searching || state_ == InstrumentState::Tracking ||
+                state_ == InstrumentState::Degraded || state_ == InstrumentState::Relocking)
+                return accept(baseline_valid_ ? InstrumentState::BaselineReady : InstrumentState::Stopped);
+            return reject("tracking is not active");
         case InstrumentCommand::Fail: {
             StateTransitionResult result = accept(InstrumentState::Error);
             error_ = detail.empty() ? "unspecified instrument error" : detail;

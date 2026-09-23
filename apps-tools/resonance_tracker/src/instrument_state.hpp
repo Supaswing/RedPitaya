@@ -26,6 +26,10 @@ enum class InstrumentCommand {
     StartDiagnostics,
     CancelDiagnostics,
     CompleteDiagnostics,
+    StartTracking,
+    TrackingGood,
+    TrackingPoor,
+    StopTracking,
     Fail,
 };
 

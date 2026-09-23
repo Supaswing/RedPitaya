@@ -30,6 +30,15 @@ int main()
     assert(machine.apply(InstrumentCommand::CompleteDiagnostics).accepted);
     assert(machine.state() == InstrumentState::BaselineReady);
 
+    assert(machine.apply(InstrumentCommand::StartTracking).accepted);
+    assert(machine.state() == InstrumentState::Tracking);
+    assert(machine.apply(InstrumentCommand::TrackingPoor).accepted);
+    assert(machine.state() == InstrumentState::Degraded);
+    assert(machine.apply(InstrumentCommand::TrackingGood).accepted);
+    assert(machine.state() == InstrumentState::Tracking);
+    assert(machine.apply(InstrumentCommand::StopTracking).accepted);
+    assert(machine.state() == InstrumentState::BaselineReady);
+
     assert(machine.apply(InstrumentCommand::Fail, "test failure").accepted);
     assert(machine.state() == InstrumentState::Error);
     assert(machine.error() == "test failure");

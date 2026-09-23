@@ -6,6 +6,7 @@
 #include "raw_iq_acquisition.hpp"
 #include "raw_iq_measurement_source.hpp"
 #include "resonance_analysis.hpp"
+#include "tracker_engine.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -32,11 +33,14 @@ constexpr double kFpgaClockHz = 125000000.0;
 constexpr std::size_t kBaselineSignalSize = 501;
 constexpr std::size_t kRefinementSignalSize = 202;
 constexpr std::size_t kDiagnosticSignalSize = 5;
+constexpr std::size_t kTrackSensorSignalSize = 2;
+constexpr std::size_t kTrackPointSignalSize = 10;
 
 enum class RequestedOperation {
     Idle,
     Baseline,
     Diagnostics,
+    Tracking,
 };
 
 enum class WebCommand {
@@ -45,13 +49,15 @@ enum class WebCommand {
     CancelBaseline = 2,
     StartDiagnostics = 3,
     CancelDiagnostics = 4,
+    StartTracking = 5,
+    StopTracking = 6,
 };
 
 CBooleanParameter rt_run("RT_RUN", CBaseParameter::RW, false, 0);
 CIntParameter rt_frequency("RT_FREQUENCY_HZ", CBaseParameter::RW, kDefaultFrequencyHz, 0, 1, 62500000);
 CIntParameter rt_telemetry_ms("RT_TELEMETRY_MS", CBaseParameter::RW, kDefaultTelemetryMs, 0, 10, 1000);
 CIntParameter rt_window_shift("RT_WINDOW_SHIFT", CBaseParameter::RW, kDefaultWindowShift, 0, 0, 20);
-CIntParameter rt_command("RT_COMMAND", CBaseParameter::RW, 0, 0, 0, 4);
+CIntParameter rt_command("RT_COMMAND", CBaseParameter::RW, 0, 0, 0, 6);
 CIntParameter rt_command_sequence("RT_COMMAND_SEQUENCE", CBaseParameter::RW, 0, 0, 0, 2147483647);
 CIntParameter rt_command_ack("RT_COMMAND_ACK", CBaseParameter::RO, 0, 0, 0, 2147483647);
 CIntParameter rt_baseline_start("RT_BASELINE_START_HZ", CBaseParameter::RW, 30000000, 0, 1, 62500000);
@@ -63,6 +69,7 @@ CIntParameter rt_baseline_filter_radius("RT_BASELINE_FILTER_RADIUS", CBaseParame
 CIntParameter rt_baseline_coarse_averages("RT_BASELINE_COARSE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
 CIntParameter rt_baseline_refine_points("RT_BASELINE_REFINE_POINTS", CBaseParameter::RW, 21, 0, 5, 101);
 CIntParameter rt_baseline_refine_averages("RT_BASELINE_REFINE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
+CIntParameter rt_tracking_points("RT_TRACK_POINTS", CBaseParameter::RW, 5, 0, 3, 5);
 CIntParameter rt_state("RT_STATE", CBaseParameter::RO, kStopped, 0, kStopped, kError);
 CStringParameter rt_error("RT_ERROR", CBaseParameter::RO, "", 0);
 CIntParameter rt_sequence("RT_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
@@ -140,6 +147,22 @@ CFloatSignal rt_diag_signal_sequence("RT_DIAG_SIGNAL_SEQUENCE", 1, 0.0f);
 CFloatSignal rt_diag_frequency("RT_DIAG_FREQUENCY_HZ", kDiagnosticSignalSize, 0.0f);
 CFloatSignal rt_diag_real("RT_DIAG_RE", kDiagnosticSignalSize, 0.0f);
 CFloatSignal rt_diag_imag("RT_DIAG_IM", kDiagnosticSignalSize, 0.0f);
+CFloatSignal rt_track_signal_sequence("RT_TRACK_SIGNAL_SEQUENCE", 1, 0.0f);
+CFloatSignal rt_track_sensor_id("RT_TRACK_SENSOR_ID", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_frequency("RT_TRACK_FREQUENCY_HZ", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_q("RT_TRACK_Q", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_se("RT_TRACK_SE_HZ", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_residual("RT_TRACK_NORMALIZED_RESIDUAL", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_gain("RT_TRACK_TEMPLATE_GAIN", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_requested_shift("RT_TRACK_REQUESTED_SHIFT_HZ", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_applied_shift("RT_TRACK_APPLIED_SHIFT_HZ", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_loss_counter("RT_TRACK_LOSS_COUNTER", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_fit_valid("RT_TRACK_FIT_VALID", kTrackSensorSignalSize, 0.0f);
+CFloatSignal rt_track_point_sensor_id("RT_TRACK_POINT_SENSOR_ID", kTrackPointSignalSize, 0.0f);
+CFloatSignal rt_track_point_offset("RT_TRACK_POINT_OFFSET", kTrackPointSignalSize, 0.0f);
+CFloatSignal rt_track_point_frequency("RT_TRACK_POINT_FREQUENCY_HZ", kTrackPointSignalSize, 0.0f);
+CFloatSignal rt_track_point_real("RT_TRACK_POINT_RE", kTrackPointSignalSize, 0.0f);
+CFloatSignal rt_track_point_imag("RT_TRACK_POINT_IM", kTrackPointSignalSize, 0.0f);
 
 CIntParameter rt_baseline_sequence("RT_BASELINE_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
 CFloatParameter rt_baseline_progress("RT_BASELINE_PROGRESS", CBaseParameter::RO, 0, 0, 0, 100);
@@ -156,6 +179,11 @@ CBooleanParameter rt_resonance_model_valid("RT_RESONANCE_MODEL_VALID", CBasePara
 CIntParameter rt_diag_sequence("RT_DIAG_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
 CIntParameter rt_diag_sensor("RT_DIAG_SENSOR_ID", CBaseParameter::RO, 0, 0, 0, 2);
 CBooleanParameter rt_diag_complete("RT_DIAG_COMPLETE", CBaseParameter::RO, false, 0);
+CIntParameter rt_track_sequence("RT_TRACK_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
+CIntParameter rt_track_points_used("RT_TRACK_POINTS_USED", CBaseParameter::RO, 0, 0, 0, 5);
+CIntParameter rt_track_sensor_count("RT_TRACK_SENSOR_COUNT", CBaseParameter::RO, 0, 0, 0, 2);
+CBooleanParameter rt_track_complete("RT_TRACK_COMPLETE", CBaseParameter::RO, false, 0);
+CBooleanParameter rt_track_recovery_required("RT_TRACK_RECOVERY_REQUIRED", CBaseParameter::RO, false, 0);
 
 struct TelemetrySnapshot {
     int state = kStopped;
@@ -224,6 +252,26 @@ struct TelemetrySnapshot {
     std::vector<float> diagnostic_frequency;
     std::vector<float> diagnostic_real;
     std::vector<float> diagnostic_imag;
+    int track_sequence = 0;
+    int track_points_used = 0;
+    int track_sensor_count = 0;
+    bool track_complete = false;
+    bool track_recovery_required = false;
+    std::vector<float> track_sensor_id;
+    std::vector<float> track_frequency;
+    std::vector<float> track_q;
+    std::vector<float> track_se;
+    std::vector<float> track_residual;
+    std::vector<float> track_gain;
+    std::vector<float> track_requested_shift;
+    std::vector<float> track_applied_shift;
+    std::vector<float> track_loss_counter;
+    std::vector<float> track_fit_valid;
+    std::vector<float> track_point_sensor_id;
+    std::vector<float> track_point_offset;
+    std::vector<float> track_point_frequency;
+    std::vector<float> track_point_real;
+    std::vector<float> track_point_imag;
 };
 
 RawIqAcquisition acquisition;
@@ -241,6 +289,7 @@ std::atomic<int> baseline_filter_radius{5};
 std::atomic<int> baseline_coarse_averages{3};
 std::atomic<int> baseline_refine_points{21};
 std::atomic<int> baseline_refine_averages{3};
+std::atomic<int> tracking_points{5};
 std::mutex operation_mutex;
 RequestedOperation requested_operation = RequestedOperation::Idle;
 std::uint64_t operation_generation = 0;
@@ -390,6 +439,50 @@ void publish_diagnostics(const DiagnosticResult& result)
     }
 }
 
+void publish_tracking(const TrackingFrame& frame)
+{
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+    telemetry.track_sequence = static_cast<int>(frame.sequence);
+    telemetry.track_points_used = static_cast<int>(frame.points_per_sensor);
+    telemetry.track_sensor_count = static_cast<int>(frame.sensors.size());
+    telemetry.track_complete = frame.complete;
+    telemetry.track_recovery_required = frame.recovery_required;
+    telemetry.track_sensor_id.clear();
+    telemetry.track_frequency.clear();
+    telemetry.track_q.clear();
+    telemetry.track_se.clear();
+    telemetry.track_residual.clear();
+    telemetry.track_gain.clear();
+    telemetry.track_requested_shift.clear();
+    telemetry.track_applied_shift.clear();
+    telemetry.track_loss_counter.clear();
+    telemetry.track_fit_valid.clear();
+    for (const auto& sensor : frame.sensors) {
+        telemetry.track_sensor_id.push_back(static_cast<float>(sensor.sensor_id));
+        telemetry.track_frequency.push_back(static_cast<float>(sensor.frequency_hz));
+        telemetry.track_q.push_back(static_cast<float>(sensor.q));
+        telemetry.track_se.push_back(static_cast<float>(sensor.frequency_se_hz));
+        telemetry.track_residual.push_back(static_cast<float>(sensor.normalized_residual));
+        telemetry.track_gain.push_back(static_cast<float>(sensor.template_gain));
+        telemetry.track_requested_shift.push_back(static_cast<float>(sensor.requested_shift_hz));
+        telemetry.track_applied_shift.push_back(static_cast<float>(sensor.applied_shift_hz));
+        telemetry.track_loss_counter.push_back(static_cast<float>(sensor.loss_counter));
+        telemetry.track_fit_valid.push_back(sensor.fit_valid ? 1.0f : 0.0f);
+    }
+    telemetry.track_point_sensor_id.clear();
+    telemetry.track_point_offset.clear();
+    telemetry.track_point_frequency.clear();
+    telemetry.track_point_real.clear();
+    telemetry.track_point_imag.clear();
+    for (const auto& point : frame.points) {
+        telemetry.track_point_sensor_id.push_back(static_cast<float>(point.sensor_id));
+        telemetry.track_point_offset.push_back(static_cast<float>(point.offset));
+        telemetry.track_point_frequency.push_back(static_cast<float>(point.measurement.effective_frequency_hz));
+        telemetry.track_point_real.push_back(static_cast<float>(point.measurement.real));
+        telemetry.track_point_imag.push_back(static_cast<float>(point.measurement.imag));
+    }
+}
+
 bool apply_state_command(InstrumentCommand command, const std::string& detail = "")
 {
     StateTransitionResult result;
@@ -470,9 +563,12 @@ void acquisition_loop()
     RollingIqStatistics statistics(kStatisticsSize);
     RawIqMeasurementSource measurement_source(acquisition);
     BaselineAnalyzer baseline_analyzer;
+    FrequencyTracker frequency_tracker;
     BaselineResult last_baseline;
     std::uint64_t baseline_sequence = 0;
     std::uint64_t diagnostic_sequence = 0;
+    std::uint64_t tracking_sequence = 0;
+    bool tracking_active = false;
     bool was_running = false;
     bool first_point = true;
     int last_frequency_hz = requested_frequency_hz.load();
@@ -484,6 +580,11 @@ void acquisition_loop()
 
     while (!exit_requested.load()) {
         const auto [operation, generation] = operation_snapshot();
+        if (tracking_active && operation != RequestedOperation::Tracking) {
+            apply_state_command(InstrumentCommand::StopTracking);
+            tracking_active = false;
+            set_activity(false, false);
+        }
         if (operation == RequestedOperation::Baseline) {
             run_requested.store(false);
             was_running = false;
@@ -619,6 +720,64 @@ void acquisition_loop()
             }
             publish_diagnostics(result);
             apply_state_command(InstrumentCommand::CompleteDiagnostics);
+            set_activity(false, false);
+            continue;
+        }
+
+        if (operation == RequestedOperation::Tracking) {
+            run_requested.store(false);
+            was_running = false;
+            first_point = true;
+            if (!acquisition.isOpen()) {
+                complete_operation(operation, generation);
+                apply_state_command(InstrumentCommand::Fail, "VNA register block is not open");
+                set_activity(false, false);
+                continue;
+            }
+            if (!last_baseline.valid || last_baseline.resonances.empty()) {
+                complete_operation(operation, generation);
+                apply_state_command(InstrumentCommand::Fail, "tracking requires a valid completed baseline");
+                set_activity(false, false);
+                continue;
+            }
+            if (!tracking_active) {
+                if (!apply_window_shift(requested_window_shift.load(), applied_window_shift)) {
+                    complete_operation(operation, generation);
+                    set_activity(false, false);
+                    continue;
+                }
+                std::string error;
+                if (!frequency_tracker.configure(last_baseline.resonances,
+                                                 static_cast<std::size_t>(tracking_points.load()), error)) {
+                    complete_operation(operation, generation);
+                    apply_state_command(InstrumentCommand::Fail, error);
+                    set_activity(false, false);
+                    continue;
+                }
+                if (!apply_state_command(InstrumentCommand::StartTracking)) {
+                    complete_operation(operation, generation);
+                    set_activity(false, false);
+                    continue;
+                }
+                tracking_sequence = 0;
+                tracking_active = true;
+            }
+            set_activity(false, true);
+            const TrackingFrame frame = frequency_tracker.acquire(
+                ++tracking_sequence, measurement_source, [&]() {
+                    return exit_requested.load() || !operation_is_current(RequestedOperation::Tracking, generation);
+                });
+            if (!operation_is_current(RequestedOperation::Tracking, generation)) continue;
+            if (!frame.complete) {
+                complete_operation(RequestedOperation::Tracking, generation);
+                apply_state_command(InstrumentCommand::Fail,
+                                    frame.error.empty() ? "tracking acquisition failed" : frame.error);
+                tracking_active = false;
+                set_activity(false, false);
+                continue;
+            }
+            publish_tracking(frame);
+            apply_state_command(frame.degraded ? InstrumentCommand::TrackingPoor : InstrumentCommand::TrackingGood);
             set_activity(false, false);
             continue;
         }
@@ -760,6 +919,7 @@ extern "C" int rp_app_init(void)
     baseline_coarse_averages.store(3);
     baseline_refine_points.store(21);
     baseline_refine_averages.store(3);
+    tracking_points.store(5);
     {
         std::lock_guard<std::mutex> lock(operation_mutex);
         requested_operation = RequestedOperation::Idle;
@@ -810,6 +970,7 @@ void UpdateParams(void)
     rt_baseline_coarse_averages.SendValue(baseline_coarse_averages.load());
     rt_baseline_refine_points.SendValue(baseline_refine_points.load());
     rt_baseline_refine_averages.SendValue(baseline_refine_averages.load());
+    rt_tracking_points.SendValue(tracking_points.load());
     rt_state.SendValue(snapshot.state);
     rt_error.SendValue(snapshot.error);
     rt_sequence.SendValue(snapshot.sequence);
@@ -872,6 +1033,11 @@ void UpdateParams(void)
     rt_diag_sequence.SendValue(snapshot.diagnostic_sequence);
     rt_diag_sensor.SendValue(snapshot.diagnostic_sensor_id);
     rt_diag_complete.SendValue(snapshot.diagnostic_complete);
+    rt_track_sequence.SendValue(snapshot.track_sequence);
+    rt_track_points_used.SendValue(snapshot.track_points_used);
+    rt_track_sensor_count.SendValue(snapshot.track_sensor_count);
+    rt_track_complete.SendValue(snapshot.track_complete);
+    rt_track_recovery_required.SendValue(snapshot.track_recovery_required);
 }
 
 void UpdateSignals(void)
@@ -907,6 +1073,22 @@ void UpdateSignals(void)
     rt_diag_frequency.Set(snapshot.diagnostic_frequency);
     rt_diag_real.Set(snapshot.diagnostic_real);
     rt_diag_imag.Set(snapshot.diagnostic_imag);
+    rt_track_signal_sequence.Set(std::vector<float>{static_cast<float>(snapshot.track_sequence)});
+    rt_track_sensor_id.Set(snapshot.track_sensor_id);
+    rt_track_frequency.Set(snapshot.track_frequency);
+    rt_track_q.Set(snapshot.track_q);
+    rt_track_se.Set(snapshot.track_se);
+    rt_track_residual.Set(snapshot.track_residual);
+    rt_track_gain.Set(snapshot.track_gain);
+    rt_track_requested_shift.Set(snapshot.track_requested_shift);
+    rt_track_applied_shift.Set(snapshot.track_applied_shift);
+    rt_track_loss_counter.Set(snapshot.track_loss_counter);
+    rt_track_fit_valid.Set(snapshot.track_fit_valid);
+    rt_track_point_sensor_id.Set(snapshot.track_point_sensor_id);
+    rt_track_point_offset.Set(snapshot.track_point_offset);
+    rt_track_point_frequency.Set(snapshot.track_point_frequency);
+    rt_track_point_real.Set(snapshot.track_point_real);
+    rt_track_point_imag.Set(snapshot.track_point_imag);
 }
 
 void UpdateBinarySignals(void) {}
@@ -970,6 +1152,11 @@ void OnNewParams(void)
         rt_baseline_refine_averages.Update();
         baseline_refine_averages.store(rt_baseline_refine_averages.Value());
     }
+    if (rt_tracking_points.IsNewValue()) {
+        rt_tracking_points.Update();
+        const int points = rt_tracking_points.Value();
+        if (points == 3 || points == 5) tracking_points.store(points);
+    }
     if (rt_command.IsNewValue()) rt_command.Update();
     if (rt_command_sequence.IsNewValue()) {
         rt_command_sequence.Update();
@@ -984,6 +1171,11 @@ void OnNewParams(void)
             run_requested.store(false);
             request_operation(RequestedOperation::Diagnostics);
         } else if (command == WebCommand::CancelDiagnostics) {
+            request_operation(RequestedOperation::Idle);
+        } else if (command == WebCommand::StartTracking) {
+            run_requested.store(false);
+            request_operation(RequestedOperation::Tracking);
+        } else if (command == WebCommand::StopTracking) {
             request_operation(RequestedOperation::Idle);
         }
         acknowledge_command(sequence);
