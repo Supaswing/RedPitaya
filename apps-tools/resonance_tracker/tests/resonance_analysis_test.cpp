@@ -153,6 +153,26 @@ void configurableFilterRadiusAndQBounds()
     }
     assert(BaselineAnalyzer::findCandidates(overview, 1, 3, 50.0, 150.0).empty());
 }
+
+void peakPolaritySelectsCentralLobe()
+{
+    const double center_hz = 32150000.0;
+    SyntheticSource source({{center_hz, 130000.0, {0.60, 0.18}}});
+    std::vector<ComplexMeasurement> overview;
+    std::string error;
+    for (std::uint32_t frequency = 30000000; frequency <= 34000000; frequency += 40000) {
+        ComplexMeasurement point;
+        assert(source.acquire(frequency, false, point, error));
+        overview.push_back(point);
+    }
+    const auto candidates = BaselineAnalyzer::findCandidates(overview, 1, 5, 50.0, 150.0);
+    assert(candidates.size() == 1);
+    assert(candidates[0].from_inflection_pair);
+    assert(candidates[0].left_frequency_hz < center_hz);
+    assert(candidates[0].right_frequency_hz > center_hz);
+    assert(std::abs(candidates[0].frequency_hz - center_hz) < 80000.0);
+    assert(candidates[0].selection_quality > 0.0);
+}
 }
 
 int main()
@@ -162,5 +182,6 @@ int main()
     missingResonance();
     cancellationDoesNotComplete();
     configurableFilterRadiusAndQBounds();
+    peakPolaritySelectsCentralLobe();
     return 0;
 }

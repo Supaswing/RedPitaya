@@ -135,12 +135,16 @@ Baseline signals:
   `RT_CANDIDATE_SELECTION_QUALITY`, and `RT_CANDIDATE_IS_INFLECTION`.
   Inflection and extrema candidates are accepted only when their derived
   `frequency/FWHM` lies in the temporary expected range 50-150. Inflection lobes
-  are ranked using balanced curvature area: twice the smaller of the positive
-  lobe area and the combined immediately adjacent negative-lobe area. This
-  suppresses isolated, near-zero crossing ripples and is the primary coarse
-  ordering metric. A local complex-model explained fraction, penalized by the
-  fitted center's displacement from the coarse candidate, is the second ordering
-  metric. The legacy curvature/prominence score is preserved as the final
+  are generated for both signed-curvature polarities because a coherent complex
+  background can make the same resonance appear as a magnitude dip, peak, or
+  shoulder. They are ranked using balanced curvature area: twice the smaller of
+  the selected lobe area and the combined immediately adjacent opposite-polarity
+  area. This suppresses isolated, near-zero crossing ripples. A hypothesis gets
+  model-supported priority only when a local coarse complex fit succeeds and its
+  fitted center remains inside the proposed zero-crossing interval; this prevents
+  a side lobe from claiming a nearby resonance that merely falls inside its wider
+  refinement window. Among model-supported hypotheses, balanced area remains the
+  primary ordering metric. The legacy curvature/prominence score is the final
   tie-breaker. The coarse calculation uses only the already acquired overview
   points.
 - Dense refinement tries candidates in ranked order. A candidate is accepted

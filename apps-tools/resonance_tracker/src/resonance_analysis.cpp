@@ -99,6 +99,7 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
     std::vector<bool> used(source.size(), false);
     while (selected.size() < wanted) {
         std::size_t best = source.size();
+        bool best_model_supported = false;
         double best_area = -1.0;
         double best_quality = -1.0;
         double best_score = -1.0;
@@ -115,11 +116,15 @@ void selectCandidates(const std::vector<ResonanceCandidate>& source, std::size_t
                 used[index] = true;
                 continue;
             }
-            if (source[index].curvature_area > best_area ||
-                (source[index].curvature_area == best_area && source[index].selection_quality > best_quality) ||
-                (source[index].curvature_area == best_area && source[index].selection_quality == best_quality &&
-                 source[index].score > best_score)) {
+            const bool model_supported = source[index].selection_quality > 0.0;
+            if ((model_supported && !best_model_supported) ||
+                (model_supported == best_model_supported && source[index].curvature_area > best_area) ||
+                (model_supported == best_model_supported && source[index].curvature_area == best_area &&
+                 source[index].selection_quality > best_quality) ||
+                (model_supported == best_model_supported && source[index].curvature_area == best_area &&
+                 source[index].selection_quality == best_quality && source[index].score > best_score)) {
                 best = index;
+                best_model_supported = model_supported;
                 best_area = source[index].curvature_area;
                 best_quality = source[index].selection_quality;
                 best_score = source[index].score;
@@ -413,6 +418,9 @@ double coarseModelQuality(const std::vector<ComplexMeasurement>& overview, const
     estimate.frequency_hz = candidate.frequency_hz;
     estimate.fwhm_hz = candidate.fwhm_hz;
     if (!fitComplexModel(local, {}, estimate) || !estimate.complex_model_valid) return 0.0;
+    if (estimate.frequency_hz < candidate.left_frequency_hz ||
+        estimate.frequency_hz > candidate.right_frequency_hz)
+        return 0.0;
     const double center_displacement = std::abs(estimate.frequency_hz - candidate.frequency_hz) /
                                        candidate.fwhm_hz;
     return std::clamp(estimate.model_explained_fraction, 0.0, 1.0) /
@@ -592,49 +600,60 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
     const double step = (stop - start) / (overview.size() - 1);
     const double maximum_fwhm = kMaximumFwhmFraction * (stop - start);
     std::vector<ResonanceCandidate> pairs;
-    bool inside = false;
-    std::size_t left_sample_index = curvature_edge;
-    double left_index = 0.0;
-    double integrated_score = 0.0;
-    for (std::size_t i = curvature_edge; i + curvature_edge + 1 < overview.size(); ++i) {
-        const double left = curvature[i];
-        const double right = curvature[i + 1];
-        if (!inside && left <= 0.0 && right > 0.0) {
-            left_index = i - left / (right - left);
-            left_sample_index = i;
-            integrated_score = right;
-            inside = true;
-        } else if (inside) {
-            if (right > 0.0) integrated_score += right;
-            if (left > 0.0 && right <= 0.0) {
-                const double right_index = i - left / (right - left);
-                ResonanceCandidate candidate;
-                candidate.from_inflection_pair = true;
-                candidate.left_frequency_hz = start + left_index * step;
-                candidate.right_frequency_hz = start + right_index * step;
-                candidate.frequency_hz = start + 0.5 * (left_index + right_index) * step;
-                candidate.fwhm_hz = kSqrt3 * (candidate.right_frequency_hz - candidate.left_frequency_hz);
-                double left_negative_area = 0.0;
-                for (std::size_t point = left_sample_index; point >= curvature_edge; --point) {
-                    if (curvature[point] > 0.0) break;
-                    left_negative_area -= curvature[point];
-                    if (point == curvature_edge) break;
+    // A resonance can appear as either a dip or a peak after an arbitrary
+    // coherent complex background is projected onto |R|^2. Build hypotheses
+    // from both positive and negative signed-curvature lobes. In each pass the
+    // selected polarity is transformed to a positive lobe so scoring remains
+    // identical and its immediately adjacent opposite-polarity area provides
+    // the balance check.
+    for (double polarity : {1.0, -1.0}) {
+        bool inside = false;
+        std::size_t left_sample_index = curvature_edge;
+        double left_index = 0.0;
+        double integrated_score = 0.0;
+        for (std::size_t i = curvature_edge; i + curvature_edge + 1 < overview.size(); ++i) {
+            const double left = polarity * curvature[i];
+            const double right = polarity * curvature[i + 1];
+            if (!inside && left <= 0.0 && right > 0.0) {
+                left_index = i - left / (right - left);
+                left_sample_index = i;
+                integrated_score = right;
+                inside = true;
+            } else if (inside) {
+                if (right > 0.0) integrated_score += right;
+                if (left > 0.0 && right <= 0.0) {
+                    const double right_index = i - left / (right - left);
+                    ResonanceCandidate candidate;
+                    candidate.from_inflection_pair = true;
+                    candidate.left_frequency_hz = start + left_index * step;
+                    candidate.right_frequency_hz = start + right_index * step;
+                    candidate.frequency_hz = start + 0.5 * (left_index + right_index) * step;
+                    candidate.fwhm_hz = kSqrt3 * (candidate.right_frequency_hz - candidate.left_frequency_hz);
+                    double left_opposite_area = 0.0;
+                    for (std::size_t point = left_sample_index; point >= curvature_edge; --point) {
+                        const double value = polarity * curvature[point];
+                        if (value > 0.0) break;
+                        left_opposite_area -= value;
+                        if (point == curvature_edge) break;
+                    }
+                    double right_opposite_area = 0.0;
+                    for (std::size_t point = i + 1; point + curvature_edge < overview.size(); ++point) {
+                        const double value = polarity * curvature[point];
+                        if (value > 0.0) break;
+                        right_opposite_area -= value;
+                    }
+                    const double surrounding_opposite_area = left_opposite_area + right_opposite_area;
+                    candidate.curvature_area = 2.0 * std::min(integrated_score, surrounding_opposite_area);
+                    candidate.score =
+                        std::abs(smoothedAt(smoothed, 0.5 * (left_index + right_index), filter_radius) -
+                                 0.5 * (smoothedAt(smoothed, left_index, filter_radius) +
+                                        smoothedAt(smoothed, right_index, filter_radius))) +
+                        integrated_score;
+                    if (candidate.fwhm_hz <= maximum_fwhm && candidate.score > 0.0 &&
+                        hasExpectedQ(candidate, minimum_q, maximum_q))
+                        retainCandidate(pairs, candidate);
+                    inside = false;
                 }
-                double right_negative_area = 0.0;
-                for (std::size_t point = i + 1; point + curvature_edge < overview.size(); ++point) {
-                    if (curvature[point] > 0.0) break;
-                    right_negative_area -= curvature[point];
-                }
-                const double surrounding_negative_area = left_negative_area + right_negative_area;
-                candidate.curvature_area = 2.0 * std::min(integrated_score, surrounding_negative_area);
-                candidate.score = std::abs(smoothedAt(smoothed, 0.5 * (left_index + right_index), filter_radius) -
-                                           0.5 * (smoothedAt(smoothed, left_index, filter_radius) +
-                                                  smoothedAt(smoothed, right_index, filter_radius))) +
-                                  integrated_score;
-                if (candidate.fwhm_hz <= maximum_fwhm && candidate.score > 0.0 &&
-                    hasExpectedQ(candidate, minimum_q, maximum_q))
-                    retainCandidate(pairs, candidate);
-                inside = false;
             }
         }
     }
