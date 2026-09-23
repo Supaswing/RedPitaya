@@ -176,7 +176,9 @@ Tracking scalars/signals:
 
 - `RT_TRACK_SEQUENCE`, `RT_TRACK_POINTS_USED`, `RT_TRACK_SENSOR_COUNT`,
   `RT_TRACK_COMPLETE`, and `RT_TRACK_RECOVERY_REQUIRED` describe the latest
-  complete frame.
+  complete frame. `RT_TRACK_RATE_HZ` is the number of complete multi-sensor
+  tracking frames per second, averaged over elapsed windows of at least one
+  second; it is not the individual coherent-point acquisition rate.
 - Per-sensor arrays are `RT_TRACK_SENSOR_ID`, `RT_TRACK_FREQUENCY_HZ`,
   `RT_TRACK_Q`, `RT_TRACK_SE_HZ`, `RT_TRACK_NORMALIZED_RESIDUAL`,
   `RT_TRACK_TEMPLATE_GAIN`, `RT_TRACK_REQUESTED_SHIFT_HZ`,
@@ -197,6 +199,13 @@ normalized residual exceeds 0.10, or gain is below 0.25. Poor frames apply zero
 shift; a good frame clears the loss counter. Three consecutive poor frames set
 `RT_TRACK_RECOVERY_REQUIRED`.
 
+The tracking dashboard retains at most 180 received complete frames per sensor
+and draws frequency change relative to each sensor's first retained value. It
+resets this browser-local history when the baseline sequence changes. Hidden
+dashboards do not append points or redraw, and skipped web publications are not
+misrepresented as measured frames; the backend frame-rate scalar remains
+independent of the web publication rate.
+
 ## Rates and bounded rendering
 
 Raw acquisition runs at the fastest ready-driven rate supported by the current
@@ -212,6 +221,11 @@ rolling statistics. In an idle or baseline-ready state, it remains requested
 configuration until the next raw, baseline, or diagnostics operation starts.
 The control is locked during baseline, resonance-finding, and diagnostics so a
 single result sequence cannot contain mixed integration lengths.
+
+`RT_PERIOD_COUNT` is read from FPGA offset `0x0c` after ready and published with
+the latest raw-IQ sample. It is the completed DDS-period count for that
+integration window; the application no longer writes or substitutes a constant
+value for this register.
 
 `RT_TELEMETRY_MS` applies immediately to parameter and signal publication for
 all dashboards. It also bounds raw-history point publication, but it does not

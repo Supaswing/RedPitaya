@@ -2,7 +2,10 @@
     const byId = function (id) { return document.getElementById(id); };
     let controlsBound = false;
     let lastSequence = -1;
+    let lastBaselineSequence = null;
     let pendingPoints = null;
+    const maximumHistory = 180;
+    const frequencyHistory = {1: [], 2: []};
 
     function values(name) {
         const signal = tracker.store.signals[name];
@@ -19,6 +22,77 @@
             byId('tracking-' + name + '-' + sensor).textContent = '-';
         });
         byId('tracking-fit-' + sensor).textContent = 'NO FRAME';
+    }
+
+    function resetFrequencyHistory() {
+        frequencyHistory[1] = [];
+        frequencyHistory[2] = [];
+        const canvas = byId('tracking-frequency-plot');
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawFrequencyHistory() {
+        const canvas = byId('tracking-frequency-plot');
+        const context = canvas.getContext('2d');
+        const left = 64, right = canvas.width - 16, top = 20, bottom = canvas.height - 30;
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        const all = frequencyHistory[1].concat(frequencyHistory[2]);
+        if (!all.length) return;
+        const firstSequence = Math.min.apply(null, all.map(function (point) { return point.sequence; }));
+        const lastHistorySequence = Math.max.apply(null, all.map(function (point) { return point.sequence; }));
+        const sequenceSpan = Math.max(1, lastHistorySequence - firstSequence);
+        const series = [1, 2].map(function (sensor) {
+            const points = frequencyHistory[sensor];
+            if (!points.length) return {sensor: sensor, points: []};
+            const reference = points[0].frequency;
+            return {sensor: sensor, reference: reference, points: points.map(function (point) {
+                return {sequence: point.sequence, delta: point.frequency - reference};
+            })};
+        });
+        const deltas = [0];
+        series.forEach(function (item) { item.points.forEach(function (point) { deltas.push(point.delta); }); });
+        let minimum = Math.min.apply(null, deltas), maximum = Math.max.apply(null, deltas);
+        const padding = Math.max(1, 0.1 * (maximum - minimum));
+        minimum -= padding;
+        maximum += padding;
+        const ySpan = maximum - minimum;
+        const x = function (sequence) { return left + (sequence - firstSequence) / sequenceSpan * (right - left); };
+        const y = function (delta) { return bottom - (delta - minimum) / ySpan * (bottom - top); };
+
+        context.strokeStyle = '#53615e';
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(left, top); context.lineTo(left, bottom); context.lineTo(right, bottom);
+        context.stroke();
+        if (minimum <= 0 && maximum >= 0) {
+            context.setLineDash([4, 4]);
+            context.beginPath(); context.moveTo(left, y(0)); context.lineTo(right, y(0)); context.stroke();
+            context.setLineDash([]);
+        }
+        context.fillStyle = '#8d9d98';
+        context.font = '11px monospace';
+        context.fillText(maximum.toFixed(1) + ' Hz', 4, top + 4);
+        context.fillText(minimum.toFixed(1) + ' Hz', 4, bottom);
+        context.fillText(String(firstSequence), left, canvas.height - 8);
+        context.textAlign = 'right';
+        context.fillText(String(lastHistorySequence), right, canvas.height - 8);
+        context.textAlign = 'left';
+        series.forEach(function (item) {
+            if (!item.points.length) return;
+            context.strokeStyle = item.sensor === 1 ? '#d5f36a' : '#69d7c6';
+            context.lineWidth = 2;
+            context.beginPath();
+            item.points.forEach(function (point, index) {
+                if (index) context.lineTo(x(point.sequence), y(point.delta));
+                else context.moveTo(x(point.sequence), y(point.delta));
+            });
+            context.stroke();
+            context.fillStyle = context.strokeStyle;
+            const latest = item.points[item.points.length - 1];
+            context.fillRect(x(latest.sequence) - 2, y(latest.delta) - 2, 4, 4);
+            context.fillText('S' + item.sensor + ' base ' + item.reference.toFixed(1) + ' Hz',
+                left + 8, top + 14 * item.sensor);
+        });
     }
 
     function renderFrame() {
@@ -59,7 +133,13 @@
             setNumber('tracking-loss-' + sensor, loss[index], 0);
             const good = Number(fitValid[index]) === 1 && Number(loss[index]) === 0;
             byId('tracking-fit-' + sensor).textContent = good ? 'GOOD' : 'POOR';
+            const sensorFrequency = Number(frequency[index]);
+            if (Number.isFinite(sensorFrequency)) {
+                frequencyHistory[sensor].push({sequence: sequence, frequency: sensorFrequency});
+                if (frequencyHistory[sensor].length > maximumHistory) frequencyHistory[sensor].shift();
+            }
         }
+        drawFrequencyHistory();
 
         const pointSensor = values('RT_TRACK_POINT_SENSOR_ID');
         const pointOffset = values('RT_TRACK_POINT_OFFSET');
@@ -114,6 +194,12 @@
         const active = state >= 6 && state <= 9;
         const baselineValid = Boolean(tracker.parameter('RT_BASELINE_VALID', false));
         const complete = Boolean(tracker.parameter('RT_TRACK_COMPLETE', false));
+        const baselineSequence = Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0));
+        if (lastBaselineSequence !== baselineSequence) {
+            resetFrequencyHistory();
+            lastSequence = -1;
+            lastBaselineSequence = baselineSequence;
+        }
         const backendPoints = Number(tracker.parameter('RT_TRACK_POINTS', 5));
         if (pendingPoints === backendPoints) pendingPoints = null;
         if (pendingPoints === null && document.activeElement !== byId('tracking-points'))
@@ -123,6 +209,7 @@
         byId('tracking-stop-button').disabled = !active;
         const recovery = Boolean(tracker.parameter('RT_TRACK_RECOVERY_REQUIRED', false));
         byId('tracking-recovery').hidden = !recovery;
+        setNumber('tracking-rate', tracker.parameter('RT_TRACK_RATE_HZ', 0), 2);
         byId('tracking-summary').textContent = complete ?
             (state === 8 ? 'Tracking is degraded; poor frames do not move the center.' :
                 'Displaying the latest complete coherent tracking frame.') :

@@ -9,6 +9,7 @@ struct RawIqSample {
     std::int32_t inc_q = 0;
     std::int32_t ref_i = 0;
     std::int32_t ref_q = 0;
+    std::uint32_t period_count = 0;
     std::uint32_t requested_frequency_hz = 0;
     std::uint32_t effective_frequency_hz = 0;
     double inc_magnitude = 0.0;

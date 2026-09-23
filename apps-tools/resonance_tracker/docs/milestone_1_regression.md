@@ -2,7 +2,7 @@
 
 Before Milestone 2A changes, the user confirmed the deployed application could
 start, stop, publish raw coherent I/Q, update statistics, change
-`WINDOW_SHIFT`, and display `PERIOD_COUNT`. The source path was inspected before
+`WINDOW_SHIFT`, and display the hardware `PERIOD_COUNT`. The source path was inspected before
 editing and the register acquisition implementation was retained rather than
 recreated.
 
@@ -13,9 +13,10 @@ is now `RAW_IQ` in the authoritative state model.
 
 Target checks still required after deploying this revision:
 
+- run `sh hardware_test.sh` to verify repeated ready-qualified fixed-frequency
+  acquisitions and a controlled 32 MHz -> 34 MHz -> 32 MHz change using the
+  hardware DDS-period count;
 - repeat start/stop several times;
-- verify fixed-frequency sequence monotonicity and update rate;
-- change frequency and confirm no old-frequency sample is published as valid;
 - change `WINDOW_SHIFT` and confirm statistics reset and readback is correct;
 - confirm browser console and Nginx/backend logs remain clear;
 - run a 30-34 MHz baseline and inspect candidate/fit results;

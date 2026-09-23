@@ -76,8 +76,7 @@ bool RawIqAcquisition::open()
     std::string error;
     const bool initialized = write(kWindowShift, kDefaultWindowShift, error) &&
                              write(kAmplitude, kDefaultAmplitude, error) &&
-                             write(kPhaseOffset, 0U, error) && write(kPeriodCount, 0U, error) &&
-                             write(kStatus, 0U, error);
+                             write(kPhaseOffset, 0U, error) && write(kStatus, 0U, error);
     if (!initialized) close();
     return initialized;
 }
@@ -171,8 +170,9 @@ bool RawIqAcquisition::measure(std::uint32_t frequency_hz, bool first_point, Raw
     std::uint32_t inc_q = 0;
     std::uint32_t ref_i = 0;
     std::uint32_t ref_q = 0;
+    std::uint32_t period_count = 0;
     if (!read(kIncI, inc_i, error) || !read(kIncQ, inc_q, error) || !read(kRefI, ref_i, error) ||
-        !read(kRefQ, ref_q, error)) return false;
+        !read(kRefQ, ref_q, error) || !read(kPeriodCount, period_count, error)) return false;
     if (!write(kStatus, 0U, error)) return false;
 
     sample.requested_frequency_hz = frequency_hz;
@@ -181,6 +181,7 @@ bool RawIqAcquisition::measure(std::uint32_t frequency_hz, bool first_point, Raw
     sample.inc_q = static_cast<std::int32_t>(inc_q);
     sample.ref_i = static_cast<std::int32_t>(ref_i);
     sample.ref_q = static_cast<std::int32_t>(ref_q);
+    sample.period_count = period_count;
     sample.inc_magnitude = std::hypot(static_cast<double>(sample.inc_i), static_cast<double>(sample.inc_q));
     sample.inc_phase_deg = std::atan2(static_cast<double>(sample.inc_q), static_cast<double>(sample.inc_i)) * 180.0 / M_PI;
     sample.ref_magnitude = std::hypot(static_cast<double>(sample.ref_i), static_cast<double>(sample.ref_q));

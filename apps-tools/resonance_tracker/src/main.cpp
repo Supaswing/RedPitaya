@@ -27,7 +27,6 @@ constexpr std::size_t kHistorySize = 128;
 constexpr int kDefaultFrequencyHz = 32000000;
 constexpr int kDefaultTelemetryMs = 50;
 constexpr int kDefaultWindowShift = 17;
-constexpr int kDefaultPeriodCount = 0;
 constexpr std::size_t kStatisticsSize = 128;
 constexpr double kFpgaClockHz = 125000000.0;
 constexpr std::size_t kBaselineSignalSize = 501;
@@ -94,7 +93,7 @@ CIntParameter rt_effective_window_shift("RT_EFFECTIVE_WINDOW_SHIFT", CBaseParame
 CDoubleParameter rt_integration_samples("RT_INTEGRATION_SAMPLES", CBaseParameter::RO, 131072.0, 0, 1.0,
                                         1048576.0);
 CFloatParameter rt_integration_time_us("RT_INTEGRATION_TIME_US", CBaseParameter::RO, 1048.576f, 0, 0, 8388.608f);
-CIntParameter rt_period_count("RT_PERIOD_COUNT", CBaseParameter::RO, kDefaultPeriodCount, 0, 0, 2147483647);
+CIntParameter rt_period_count("RT_PERIOD_COUNT", CBaseParameter::RO, 0, 0, 0, 2147483647);
 CIntParameter rt_stats_count("RT_STATS_COUNT", CBaseParameter::RO, 0, 0, 0, kStatisticsSize);
 CIntParameter rt_ratio_stats_count("RT_RATIO_STATS_COUNT", CBaseParameter::RO, 0, 0, 0, kStatisticsSize);
 CBooleanParameter rt_ratio_valid("RT_R_VALID", CBaseParameter::RO, false, 0);
@@ -184,6 +183,7 @@ CIntParameter rt_track_points_used("RT_TRACK_POINTS_USED", CBaseParameter::RO, 0
 CIntParameter rt_track_sensor_count("RT_TRACK_SENSOR_COUNT", CBaseParameter::RO, 0, 0, 0, 2);
 CBooleanParameter rt_track_complete("RT_TRACK_COMPLETE", CBaseParameter::RO, false, 0);
 CBooleanParameter rt_track_recovery_required("RT_TRACK_RECOVERY_REQUIRED", CBaseParameter::RO, false, 0);
+CFloatParameter rt_track_rate("RT_TRACK_RATE_HZ", CBaseParameter::RO, 0.0f, 0, 0.0f, 1e6f);
 
 struct TelemetrySnapshot {
     int state = kStopped;
@@ -207,6 +207,7 @@ struct TelemetrySnapshot {
     int effective_window_shift = kDefaultWindowShift;
     double integration_samples = 131072.0;
     float integration_time_us = 1048.576f;
+    int period_count = 0;
     IqStatisticsSnapshot statistics;
     std::vector<float> history_frequency;
     std::vector<float> history_inc_mag;
@@ -257,6 +258,7 @@ struct TelemetrySnapshot {
     int track_sensor_count = 0;
     bool track_complete = false;
     bool track_recovery_required = false;
+    float track_rate_hz = 0.0f;
     std::vector<float> track_sensor_id;
     std::vector<float> track_frequency;
     std::vector<float> track_q;
@@ -439,7 +441,7 @@ void publish_diagnostics(const DiagnosticResult& result)
     }
 }
 
-void publish_tracking(const TrackingFrame& frame)
+void publish_tracking(const TrackingFrame& frame, double frame_rate_hz)
 {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
     telemetry.track_sequence = static_cast<int>(frame.sequence);
@@ -447,6 +449,7 @@ void publish_tracking(const TrackingFrame& frame)
     telemetry.track_sensor_count = static_cast<int>(frame.sensors.size());
     telemetry.track_complete = frame.complete;
     telemetry.track_recovery_required = frame.recovery_required;
+    if (frame_rate_hz >= 0.0) telemetry.track_rate_hz = static_cast<float>(frame_rate_hz);
     telemetry.track_sensor_id.clear();
     telemetry.track_frequency.clear();
     telemetry.track_q.clear();
@@ -552,6 +555,7 @@ void publish_sample(const RawIqSample& sample, const IqStatisticsSnapshot& stati
     telemetry.inc_phase_deg = static_cast<float>(sample.inc_phase_deg);
     telemetry.ref_magnitude = static_cast<float>(sample.ref_magnitude);
     telemetry.ref_phase_deg = static_cast<float>(sample.ref_phase_deg);
+    telemetry.period_count = static_cast<int>(sample.period_count);
     telemetry.acquisition_rate_hz = static_cast<float>(acquisition_rate);
     telemetry.statistics = statistics;
     if (publish_history) append_history(telemetry, sample);
@@ -576,13 +580,19 @@ void acquisition_loop()
     auto last_measurement = std::chrono::steady_clock::now();
     auto last_history = last_measurement - std::chrono::milliseconds(telemetry_interval_ms.load());
     auto publication_window = last_measurement;
+    auto tracking_rate_window = last_measurement;
     int publication_count = 0;
+    std::size_t tracking_frame_count = 0;
 
     while (!exit_requested.load()) {
         const auto [operation, generation] = operation_snapshot();
         if (tracking_active && operation != RequestedOperation::Tracking) {
             apply_state_command(InstrumentCommand::StopTracking);
             tracking_active = false;
+            {
+                std::lock_guard<std::mutex> lock(telemetry_mutex);
+                telemetry.track_rate_hz = 0.0f;
+            }
             set_activity(false, false);
         }
         if (operation == RequestedOperation::Baseline) {
@@ -639,6 +649,7 @@ void acquisition_loop()
                 telemetry.track_sensor_count = 0;
                 telemetry.track_complete = false;
                 telemetry.track_recovery_required = false;
+                telemetry.track_rate_hz = 0.0f;
                 telemetry.track_sensor_id.clear();
                 telemetry.track_frequency.clear();
                 telemetry.track_q.clear();
@@ -783,7 +794,10 @@ void acquisition_loop()
                     std::lock_guard<std::mutex> lock(telemetry_mutex);
                     telemetry.track_complete = false;
                     telemetry.track_recovery_required = false;
+                    telemetry.track_rate_hz = 0.0f;
                 }
+                tracking_rate_window = std::chrono::steady_clock::now();
+                tracking_frame_count = 0;
                 tracking_active = true;
             }
             set_activity(false, true);
@@ -797,10 +811,24 @@ void acquisition_loop()
                 apply_state_command(InstrumentCommand::Fail,
                                     frame.error.empty() ? "tracking acquisition failed" : frame.error);
                 tracking_active = false;
+                {
+                    std::lock_guard<std::mutex> lock(telemetry_mutex);
+                    telemetry.track_rate_hz = 0.0f;
+                }
                 set_activity(false, false);
                 continue;
             }
-            publish_tracking(frame);
+            ++tracking_frame_count;
+            const auto tracking_rate_now = std::chrono::steady_clock::now();
+            const double tracking_rate_elapsed =
+                std::chrono::duration<double>(tracking_rate_now - tracking_rate_window).count();
+            double tracking_rate_hz = -1.0;
+            if (tracking_rate_elapsed >= 1.0) {
+                tracking_rate_hz = static_cast<double>(tracking_frame_count) / tracking_rate_elapsed;
+                tracking_rate_window = tracking_rate_now;
+                tracking_frame_count = 0;
+            }
+            publish_tracking(frame, tracking_rate_hz);
             apply_state_command(frame.degraded ? InstrumentCommand::TrackingPoor : InstrumentCommand::TrackingGood);
             set_activity(false, false);
             continue;
@@ -1016,7 +1044,7 @@ void UpdateParams(void)
     rt_effective_window_shift.SendValue(snapshot.effective_window_shift);
     rt_integration_samples.SendValue(snapshot.integration_samples);
     rt_integration_time_us.SendValue(snapshot.integration_time_us);
-    rt_period_count.SendValue(kDefaultPeriodCount);
+    rt_period_count.SendValue(snapshot.period_count);
     rt_stats_count.SendValue(static_cast<int>(snapshot.statistics.sample_count));
     rt_ratio_stats_count.SendValue(static_cast<int>(snapshot.statistics.ratio_sample_count));
     rt_ratio_valid.SendValue(snapshot.statistics.ratio_valid);
@@ -1062,6 +1090,7 @@ void UpdateParams(void)
     rt_track_sensor_count.SendValue(snapshot.track_sensor_count);
     rt_track_complete.SendValue(snapshot.track_complete);
     rt_track_recovery_required.SendValue(snapshot.track_recovery_required);
+    rt_track_rate.SendValue(snapshot.track_rate_hz);
 }
 
 void UpdateSignals(void)
