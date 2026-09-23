@@ -76,6 +76,11 @@
         return tracker.transport.send(values);
     };
     tracker.store = store;
+    document.querySelectorAll('[data-view]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            setActiveView(button.getAttribute('data-view'));
+        });
+    });
     tracker.publish = function (parameters, signals) {
         Object.assign(store.params, parameters || {});
         Object.assign(store.signals, signals || {});

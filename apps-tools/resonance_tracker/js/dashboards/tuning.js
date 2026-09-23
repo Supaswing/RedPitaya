@@ -439,7 +439,6 @@
         const selected = baselines.filter(function (row) { return row.checked && row.status === 'Complete'; });
         const minimum = drawBaseline(selected, estimates, targetFrequency, targetSeparation);
         renderTable();
-        const state = Number(tracker.parameter('RT_STATE', 0));
         const active = state === 2 || state === 4;
         byId('tuning-acquire-button').disabled = pendingIteration !== null || active || state === 5 ||
             (state >= 6 && state <= 9);
