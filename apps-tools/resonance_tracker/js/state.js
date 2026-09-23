@@ -54,7 +54,8 @@
             Number(parameter('RT_INTEGRATION_SAMPLES', 131072)).toFixed(0);
         if (nextState !== store.instrumentState) {
             store.instrumentState = nextState;
-            if (nextState !== 10 && defaultViews[nextState]) setActiveView(defaultViews[nextState]);
+            if (nextState !== 10 && defaultViews[nextState] && store.activeView !== 'tuning')
+                setActiveView(defaultViews[nextState]);
         }
     }
 

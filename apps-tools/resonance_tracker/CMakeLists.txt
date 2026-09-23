@@ -73,6 +73,8 @@ option(RESONANCE_TRACKER_BUILD_HARDWARE_TESTS "Build target-only raw-IQ hardware
 if(RESONANCE_TRACKER_BUILD_HARDWARE_TESTS)
     add_executable(raw_iq_hardware_test tests/raw_iq_hardware_test.cpp src/raw_iq_acquisition.cpp)
     target_include_directories(raw_iq_hardware_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_executable(raw_iq_noise_test tests/raw_iq_noise_test.cpp src/raw_iq_acquisition.cpp)
+    target_include_directories(raw_iq_noise_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 endif()
 
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/css DESTINATION ${BUILD_PATH})

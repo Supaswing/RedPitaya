@@ -8,9 +8,11 @@ $appDirectory = $PSScriptRoot
 $files = @(
     "CMakeLists.txt",
     "hardware_test.sh",
+    "noise_test.sh",
     "src/raw_iq_acquisition.cpp",
     "src/raw_iq_acquisition.hpp",
-    "tests/raw_iq_hardware_test.cpp"
+    "tests/raw_iq_hardware_test.cpp",
+    "tests/raw_iq_noise_test.cpp"
 )
 
 foreach ($relativePath in $files) {
@@ -27,3 +29,4 @@ foreach ($relativePath in $files) {
 
 Write-Host "Hardware-test sources copied to ${Target}:$RemoteAppDirectory"
 Write-Host "Stop the web app, then run: cd $RemoteAppDirectory && sh hardware_test.sh 2>&1 | tee hardware_test.log"
+Write-Host "Noise test: cd $RemoteAppDirectory && sh noise_test.sh 2>&1 | tee noise_test.log"

@@ -141,14 +141,27 @@ bool RawIqAcquisition::write(std::uint32_t offset, std::uint32_t value, std::str
 
 bool RawIqAcquisition::measure(std::uint32_t frequency_hz, bool first_point, RawIqSample& sample, std::string& error)
 {
+    if (!measurePhaseIncrement(frequency_to_phase_increment(frequency_hz), first_point, sample, error)) return false;
+    sample.requested_frequency_hz = frequency_hz;
+    return true;
+}
+
+bool RawIqAcquisition::measurePhaseIncrement(std::uint32_t phase_increment, bool first_point,
+                                             RawIqSample& sample, std::string& error)
+{
     if (!isOpen()) {
         error = "VNA register block is not open";
         return false;
     }
 
-    const std::uint32_t phase_increment = frequency_to_phase_increment(frequency_hz);
-    if (!write(kPhaseIncrement, phase_increment, error) || !write(kControl, kRestart, error) ||
-        !write(kControl, kRun, error)) return false;
+    std::uint32_t applied_phase_increment = 0;
+    if (!write(kPhaseIncrement, phase_increment, error) ||
+        !read(kPhaseIncrement, applied_phase_increment, error)) return false;
+    if (applied_phase_increment != phase_increment) {
+        error = "VNA phase increment readback mismatch";
+        return false;
+    }
+    if (!write(kControl, kRestart, error) || !write(kControl, kRun, error)) return false;
     (void)first_point;
     usleep(kSettlingUs);
     if (!write(kStatus, 0U, error) || !write(kVnaControl, kMeasurementStart, error)) return false;
@@ -175,8 +188,9 @@ bool RawIqAcquisition::measure(std::uint32_t frequency_hz, bool first_point, Raw
         !read(kRefQ, ref_q, error) || !read(kPeriodCount, period_count, error)) return false;
     if (!write(kStatus, 0U, error)) return false;
 
-    sample.requested_frequency_hz = frequency_hz;
-    sample.effective_frequency_hz = phase_increment_to_frequency(phase_increment);
+    sample.phase_increment = applied_phase_increment;
+    sample.requested_frequency_hz = phase_increment_to_frequency(phase_increment);
+    sample.effective_frequency_hz = phase_increment_to_frequency(applied_phase_increment);
     sample.inc_i = static_cast<std::int32_t>(inc_i);
     sample.inc_q = static_cast<std::int32_t>(inc_q);
     sample.ref_i = static_cast<std::int32_t>(ref_i);

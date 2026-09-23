@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Resonance Tracker</title>
     <link rel="stylesheet" href="../assets/bootstrap/css/bootstrap.min.css">
-    <link rel="stylesheet" href="css/style.css?v=2b2">
+    <link rel="stylesheet" href="css/style.css?v=2b3">
     <script src="../assets/jquery/jquery-2.1.3.min.js"></script>
     <script src="../assets/pako.js"></script>
     <script src="../assets/js/rpDataParser.js"></script>
@@ -20,6 +20,7 @@
             <button type="button" data-view="baseline">Baseline</button>
             <button type="button" data-view="diagnostics">Diagnostics</button>
             <button type="button" data-view="tracking">Tracking</button>
+            <button type="button" data-view="tuning">Tuning</button>
         </nav>
         <section id="dashboard-stopped" class="dashboard">
             <div class="empty-dashboard"><span>Instrument idle</span><h2>Stopped</h2><p>Select Raw I/Q and press RUN to begin acquisition. Selecting a dashboard does not operate the hardware.</p></div>
@@ -109,14 +110,44 @@
                 <table><thead><tr><th>Sensor</th><th>Offset</th><th>Effective frequency [Hz]</th><th>Real(R)</th><th>Imag(R)</th></tr></thead><tbody id="tracking-point-table"></tbody></table>
             </section>
         </section>
+        <section id="dashboard-tuning" class="dashboard" hidden>
+            <section class="controls tuning-controls">
+                <label>Target resonance [Hz]<input id="tuning-target-frequency" type="number" min="1" max="62500000" step="1" value="30000000"></label>
+                <label>Target separation [Hz]<input id="tuning-target-separation" type="number" min="0" max="62500000" step="1" value="0"></label>
+                <label>Tolerance [Hz]<input id="tuning-tolerance" type="number" min="0" max="10000000" step="1" value="1000"></label>
+            </section>
+            <p class="control-note">These targets are browser-local guides and never operate the hardware. Resonance values use the latest coherent tracking frame when available, otherwise the last valid baseline fit. Adjust the varactor or bridge externally, then run baseline or tracking from its own dashboard. Reference amplitude is a measured response proxy; delivered power is not calibrated by the current I/Q contract.</p>
+            <section class="tuning-hero">
+                <article><span>Sensor 1 resonance</span><strong id="tuning-frequency-1">-</strong><small>Hz</small><em id="tuning-error-1">No valid resonance</em></article>
+                <article><span>Sensor 2 resonance</span><strong id="tuning-frequency-2">-</strong><small>Hz</small><em id="tuning-error-2">Not available</em></article>
+                <article><span>Resonance separation</span><strong id="tuning-separation">-</strong><small>Hz</small><em id="tuning-separation-error">Two resonances required</em></article>
+                <article><span>Estimate source</span><strong id="tuning-source">NONE</strong><small id="tuning-source-detail">Acquire a baseline</small></article>
+            </section>
+            <section class="tuning-meter-grid">
+                <article><span>Incident amplitude</span><strong id="tuning-incident-amplitude">-</strong><small>raw coherent units</small></article>
+                <article><span>Response amplitude</span><strong id="tuning-response-amplitude">-</strong><small>REF magnitude; maximize for transfer proxy</small></article>
+                <article><span>Reflection magnitude</span><strong id="tuning-reflection">-</strong><small>live |R|; minimize for bridge balance</small></article>
+                <article><span>REF / INC amplitude</span><strong id="tuning-balance-db">-</strong><small>dB; uncalibrated</small></article>
+                <article><span>Baseline minimum |R|</span><strong id="tuning-min-reflection">-</strong><small id="tuning-min-reflection-frequency">no complete scan</small></article>
+                <article><span>Incident relative noise</span><strong id="tuning-incident-noise">-</strong><small>complex vector SD / mean</small></article>
+                <article><span>Reference relative noise</span><strong id="tuning-reference-noise">-</strong><small>complex vector SD / mean</small></article>
+                <article><span>Reflection stability</span><strong id="tuning-reflection-noise">-</strong><small>SD(|R|) / mean(|R|)</small></article>
+            </section>
+            <section class="analysis-panel">
+                <div class="section-head"><div><h2>Tuning curve</h2><p id="tuning-summary">No completed baseline is available.</p></div><span>last coherent baseline / live estimates</span></div>
+                <canvas id="tuning-plot" width="900" height="320"></canvas>
+                <div class="plot-legend"><span class="legend-baseline">Measured |R|</span><span class="legend-center">Fitted resonance</span><span class="legend-tuning-target">Tuning target</span><span class="legend-tuning-minimum">Minimum measured reflection</span></div>
+            </section>
+        </section>
     </main>
-    <script src="js/state.js?v=2b2"></script>
+    <script src="js/state.js?v=2b3"></script>
     <script src="js/transport.js?v=2b2"></script>
     <script src="js/dashboards/stopped.js?v=2b2"></script>
     <script src="js/dashboards/raw_iq.js?v=2b2"></script>
     <script src="js/dashboards/baseline.js?v=2b2"></script>
     <script src="js/dashboards/diagnostics.js?v=2b2"></script>
     <script src="js/dashboards/tracking.js?v=2b2"></script>
+    <script src="js/dashboards/tuning.js?v=2b3"></script>
     <script src="js/app.js?v=2b2"></script>
 </body>
 </html>

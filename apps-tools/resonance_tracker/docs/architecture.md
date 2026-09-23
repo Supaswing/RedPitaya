@@ -29,6 +29,14 @@ in JavaScript. Dashboard `enter`, `update`, and `leave` methods render the store
 selecting a dashboard sends no hardware command. Only explicit buttons send an
 `RT_COMMAND`.
 
+The tuning dashboard is also browser-local. It combines the latest coherent
+tracking estimate (falling back to the last valid baseline fit), the completed
+baseline curve, and raw-IQ statistics. Its target frequency, target separation,
+and tolerance are local display settings; changing them never changes FPGA or
+tracker state. Reference-channel magnitude is labelled as an uncalibrated
+transfer proxy because the current interface has no calibrated transmission or
+delivered-power measurement.
+
 ## State transitions
 
 | Current state | Command/result | Next state |
@@ -212,7 +220,8 @@ Raw acquisition runs at the fastest ready-driven rate supported by the current
 window. Web publication defaults to 20 Hz and remains independent. Raw history
 is bounded to 128 points. Baseline has exactly 101 overview points and
 diagnostics exactly five points. Hidden dashboards receive no render calls and
-own no timers.
+own no timers. The tuning view redraws only while visible and retains no
+additional measurement history.
 
 `RT_WINDOW_SHIFT` is global hardware acquisition configuration and its control
 is displayed in the application header. In `RAW_IQ`, a

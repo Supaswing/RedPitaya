@@ -74,9 +74,12 @@ the contract status. `RT_VALID` means the complete I/Q and period-count read
 completed after ready.
 
 `RT_PERIOD_COUNT` publishes the hardware value read at offset `0x0c` for the
-same ready-qualified window. At a fixed frequency it is expected to remain
-stable; changing frequency should change it approximately as
-`2^WINDOW_SHIFT * effective_frequency / 125000000`.
+same ready-qualified window. It counts DDS periods over an interval that also
+includes settling/control latency, not only the `2^WINDOW_SHIFT` integration
+samples. Consequently,
+`2^WINDOW_SHIFT * effective_frequency / 125000000` is a lower bound rather
+than an exact expected value. ARM/Linux scheduling jitter can vary the count
+between otherwise identical measurements.
 
 ## Frequency and phase conventions
 
@@ -98,12 +101,12 @@ sh hardware_test.sh
 
 Optional arguments are `frequency_a_hz frequency_b_hz fixed_samples
 window_shift`. Defaults are `32000000 34000000 10 17`. The test prints CSV for
-every ready-qualified sample, checks that fixed-frequency `PERIOD_COUNT` stays
-within two counts, verifies it against the expected DDS periods, changes the
-frequency, and returns to the original frequency. The changed period count is
-hardware evidence that the post-change I/Q window used the new DDS setting. A
-successful run ends with `PASS`; preserve its complete output as the hardware
-validation record.
+every ready-qualified sample, reads back the programmed DDS phase increment,
+checks that `PERIOD_COUNT` is at least the integration-only lower bound and
+that its implied duration fits within the measured acquisition-call duration,
+changes the frequency, and returns to the original frequency. A successful run
+ends with `PASS`; preserve its complete output as the hardware validation
+record.
 
 ## Limits and open questions
 
@@ -117,3 +120,24 @@ timeout, but no measured maximum update rate. The app publishes telemetry at
 - `TODO(hardware)`: attach the output of `sh hardware_test.sh` to this document
   after running it on the target. The test is implemented but cannot access
   `/dev/mem` in the Windows development environment.
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: /root/RedPitaya/apps-tools/resonance_tracker/build-hardware-test
+[ 33%] Building CXX object CMakeFiles/raw_iq_hardware_test.dir/tests/raw_iq_hardware_test.cpp.o
+[ 66%] Building CXX object CMakeFiles/raw_iq_hardware_test.dir/src/raw_iq_acquisition.cpp.o
+[100%] Linking CXX executable resonance_tracker/raw_iq_hardware_test
+[100%] Built target raw_iq_hardware_test
+sequence,stage,requested_hz,effective_hz,period_count,minimum_integration_periods,period_count_duration_us,measurement_call_duration_us,inc_i,inc_q,ref_i,ref_q
+1,fixed_a,32000000,32000000,43799,33554.4,1368.72,1502.33,346009,-722999,944986,1956688
+2,fixed_a,32000000,32000000,40958,33554.4,1279.94,1292.94,321516,-722186,933314,1958401
+3,fixed_a,32000000,32000000,40721,33554.4,1272.53,1283.21,315985,-723957,930451,1957874
+4,fixed_a,32000000,32000000,40597,33554.4,1268.66,1278.89,322112,-724293,933233,1957450
+5,fixed_a,32000000,32000000,40033,33554.4,1251.03,1262.04,340163,-727375,943059,1954549
+6,fixed_a,32000000,32000000,39639,33554.4,1238.72,1252.43,338229,-728288,948167,1951985
+7,fixed_a,32000000,32000000,41820,33554.4,1306.88,1325.35,337242,-727117,954764,1950106
+8,fixed_a,32000000,32000000,41706,33554.4,1303.31,1319.88,341429,-724944,957222,1950824
+9,fixed_a,32000000,32000000,41161,33554.4,1286.28,1300.07,331285,-722425,939356,1957275
+10,fixed_a,32000000,32000000,46614,33554.4,1456.69,1474,309908,-727338,942762,1951065
+11,changed_b,34000000,34000000,43595,35651.6,1282.21,1294.91,-629529,222033,2055727,-721784
+12,returned_a,32000000,32000000,40031,33554.4,1250.97,1262.59,340562,-726966,943255,1954764
+PASS: 12 ready-qualified acquisitions completed in order with DDS readback; fixed-frequency PERIOD_COUNT range=39639..46614, changed-frequency PERIOD_COUNT=43595

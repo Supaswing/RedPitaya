@@ -10,6 +10,7 @@ struct RawIqSample {
     std::int32_t ref_i = 0;
     std::int32_t ref_q = 0;
     std::uint32_t period_count = 0;
+    std::uint32_t phase_increment = 0;
     std::uint32_t requested_frequency_hz = 0;
     std::uint32_t effective_frequency_hz = 0;
     double inc_magnitude = 0.0;
@@ -24,6 +25,8 @@ public:
     void close();
     bool setWindowShift(std::uint32_t window_shift, std::string& error);
     bool measure(std::uint32_t frequency_hz, bool first_point, RawIqSample& sample, std::string& error);
+    bool measurePhaseIncrement(std::uint32_t phase_increment, bool first_point, RawIqSample& sample,
+                               std::string& error);
     bool isOpen() const;
 
 private:
