@@ -30,6 +30,8 @@
         document.querySelectorAll('[data-view]').forEach(function (button) {
             button.classList.toggle('active', button.getAttribute('data-view') === name);
         });
+        const advanced = document.querySelector('.advanced-nav');
+        if (advanced) advanced.open = name === 'raw';
         store.activeView = name;
         if (next.enter) next.enter(store);
     }
@@ -78,6 +80,10 @@
         Object.assign(store.params, parameters || {});
         Object.assign(store.signals, signals || {});
         updateGlobalStatus();
+        Object.keys(store.dashboards).forEach(function (name) {
+            const dashboard = store.dashboards[name];
+            if (dashboard.observe) dashboard.observe(store);
+        });
         const active = store.dashboards[store.activeView];
         if (active && active.update) active.update(store);
     };

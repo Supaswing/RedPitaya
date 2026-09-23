@@ -175,6 +175,10 @@ CDoubleParameter rt_resonance_fwhm("RT_RESONANCE_FWHM_HZ", CBaseParameter::RO, 0
 CDoubleParameter rt_resonance_se("RT_RESONANCE_SE_HZ", CBaseParameter::RO, 0, 0, 0, 62500000);
 CFloatParameter rt_resonance_quality("RT_RESONANCE_MODEL_QUALITY", CBaseParameter::RO, 0, 0, 0, 1);
 CBooleanParameter rt_resonance_model_valid("RT_RESONANCE_MODEL_VALID", CBaseParameter::RO, false, 0);
+CFloatParameter rt_resonance_noise("RT_RESONANCE_NOISE", CBaseParameter::RO, 0, 0, 0, 1e12);
+CBooleanParameter rt_resonance_noise_valid("RT_RESONANCE_NOISE_VALID", CBaseParameter::RO, false, 0);
+CFloatParameter rt_resonance_local_slope("RT_RESONANCE_LOCAL_SLOPE_PER_HZ", CBaseParameter::RO, 0, 0, 0, 1e12);
+CBooleanParameter rt_resonance_local_slope_valid("RT_RESONANCE_LOCAL_SLOPE_VALID", CBaseParameter::RO, false, 0);
 CIntParameter rt_diag_sequence("RT_DIAG_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
 CIntParameter rt_diag_sensor("RT_DIAG_SENSOR_ID", CBaseParameter::RO, 0, 0, 0, 2);
 CBooleanParameter rt_diag_complete("RT_DIAG_COMPLETE", CBaseParameter::RO, false, 0);
@@ -225,6 +229,10 @@ struct TelemetrySnapshot {
     double resonance_se_hz = 0.0;
     float resonance_model_quality = 0.0f;
     bool resonance_model_valid = false;
+    float resonance_noise = 0.0f;
+    bool resonance_noise_valid = false;
+    float resonance_local_slope_per_hz = 0.0f;
+    bool resonance_local_slope_valid = false;
     std::vector<float> baseline_frequency;
     std::vector<float> baseline_real;
     std::vector<float> baseline_imag;
@@ -420,6 +428,10 @@ void publish_baseline(const BaselineResult& result)
         telemetry.resonance_se_hz = resonance.frequency_se_hz;
         telemetry.resonance_model_quality = static_cast<float>(resonance.model_explained_fraction);
         telemetry.resonance_model_valid = resonance.complex_model_valid;
+        telemetry.resonance_noise = static_cast<float>(resonance.refinement_noise);
+        telemetry.resonance_noise_valid = resonance.refinement_noise_valid;
+        telemetry.resonance_local_slope_per_hz = static_cast<float>(resonance.local_slope_per_hz);
+        telemetry.resonance_local_slope_valid = resonance.local_slope_valid;
     }
 }
 
@@ -1082,6 +1094,10 @@ void UpdateParams(void)
     rt_resonance_se.SendValue(snapshot.resonance_se_hz);
     rt_resonance_quality.SendValue(snapshot.resonance_model_quality);
     rt_resonance_model_valid.SendValue(snapshot.resonance_model_valid);
+    rt_resonance_noise.SendValue(snapshot.resonance_noise);
+    rt_resonance_noise_valid.SendValue(snapshot.resonance_noise_valid);
+    rt_resonance_local_slope.SendValue(snapshot.resonance_local_slope_per_hz);
+    rt_resonance_local_slope_valid.SendValue(snapshot.resonance_local_slope_valid);
     rt_diag_sequence.SendValue(snapshot.diagnostic_sequence);
     rt_diag_sensor.SendValue(snapshot.diagnostic_sensor_id);
     rt_diag_complete.SendValue(snapshot.diagnostic_complete);

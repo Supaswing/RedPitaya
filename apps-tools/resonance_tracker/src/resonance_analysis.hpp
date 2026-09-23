@@ -61,6 +61,10 @@ struct ResonanceEstimate {
     double spacing_hz = 0.0;
     double frequency_se_hz = 0.0;
     double model_explained_fraction = 0.0;
+    double refinement_noise = 0.0; // RMS complex deviation of individual refinement windows.
+    bool refinement_noise_valid = false;
+    double local_slope_per_hz = 0.0; // Magnitude of the fitted complex response derivative near f0.
+    bool local_slope_valid = false;
     bool complex_model_valid = false;
     ResonanceCandidate candidate;
     std::vector<ComplexMeasurement> refinement;

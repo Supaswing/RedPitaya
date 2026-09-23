@@ -370,6 +370,36 @@ bool fitComplexModel(const std::vector<ComplexMeasurement>& points, const std::v
     }
 
     if (replicates.size() >= 2) {
+        double noise_energy = 0.0;
+        std::size_t noise_count = 0;
+        for (std::size_t point = 0; point < points.size(); ++point) {
+            for (const auto& replicate : replicates) {
+                if (replicate.size() != points.size()) continue;
+                noise_energy += std::norm(replicate[point] - data[point]);
+                ++noise_count;
+            }
+        }
+        if (noise_count) {
+            estimate.refinement_noise = std::sqrt(noise_energy / noise_count);
+            estimate.refinement_noise_valid = true;
+        }
+    }
+    if (estimate.model.size() >= 2) {
+        std::size_t right = 1;
+        while (right + 1 < estimate.model.size() &&
+               estimate.model[right].effective_frequency_hz < estimate.frequency_hz) ++right;
+        const auto& left_point = estimate.model[right - 1];
+        const auto& right_point = estimate.model[right];
+        const double delta_hz = static_cast<double>(right_point.effective_frequency_hz) -
+                                left_point.effective_frequency_hz;
+        if (delta_hz > 0.0) {
+            estimate.local_slope_per_hz = std::hypot(right_point.real - left_point.real,
+                                                      right_point.imag - left_point.imag) / delta_hz;
+            estimate.local_slope_valid = true;
+        }
+    }
+
+    if (replicates.size() >= 2) {
         std::vector<double> centers;
         for (const auto& replicate : replicates) {
             std::vector<Complex> replicate_residual;

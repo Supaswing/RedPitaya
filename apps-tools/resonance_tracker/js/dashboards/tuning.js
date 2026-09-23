@@ -1,6 +1,73 @@
 (function (tracker) {
     const byId = function (id) { return document.getElementById(id); };
     let controlsBound = false;
+    const storageKey = 'resonance-tracker-tuning-baselines-v1';
+    const maxBaselines = 24;
+    const colors = ['#d5f36a', '#69d7c6', '#9d8cff', '#f0a35e', '#f58a75', '#82b9fa'];
+    let baselines = [];
+    let nextIteration = 1;
+    let lastCapturedSequence = null;
+    let pendingIteration = null;
+    let tableSignature = '';
+
+    function loadBaselines() {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem(storageKey) || '[]');
+            if (Array.isArray(saved)) baselines = saved.filter(function (row) {
+                return row && Number.isInteger(row.iteration) && row.iteration > 0 &&
+                    (row.status !== 'Complete' || row.curve && Array.isArray(row.curve.frequency) &&
+                     Array.isArray(row.curve.magnitude) && row.curve.frequency.length === row.curve.magnitude.length);
+            }).slice(-maxBaselines);
+        } catch (error) { baselines = []; }
+        nextIteration = baselines.reduce(function (value, row) { return Math.max(value, row.iteration + 1); }, 1);
+    }
+
+    function saveBaselines() {
+        try { window.localStorage.setItem(storageKey, JSON.stringify(baselines)); }
+        catch (error) { byId('tuning-baseline-status').textContent = 'Browser storage is full; this session still has the curves.'; }
+    }
+
+    function format(value, digits) { return Number.isFinite(value) ? value.toFixed(digits) : '-'; }
+
+    function renderTable() {
+        const signature = baselines.map(function (row) {
+            return [row.iteration, row.status, row.checked, row.fres].join(':');
+        }).join('|');
+        if (signature === tableSignature) return;
+        tableSignature = signature;
+        const body = byId('tuning-baseline-table');
+        body.textContent = '';
+        baselines.slice().reverse().forEach(function (row) {
+            const tr = document.createElement('tr');
+            tr.dataset.selected = String(Boolean(row.checked));
+            const show = document.createElement('td');
+            if (row.status === 'Complete') {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = Boolean(row.checked);
+                checkbox.setAttribute('aria-label', 'Show baseline iteration ' + row.iteration);
+                checkbox.addEventListener('change', function () {
+                    row.checked = checkbox.checked;
+                    saveBaselines();
+                    update();
+                });
+                show.appendChild(checkbox);
+            }
+            tr.appendChild(show);
+            [row.iteration, row.status === 'Complete' ? format(row.fres, 1) : row.status,
+                format(row.q, 2), format(row.fwhm, 1), row.fit || '-',
+                format(row.noise, 6), format(row.quality, 3),
+                Number.isFinite(row.slope) ? row.slope.toExponential(3) : '-', format(row.se, 1)]
+                .forEach(function (value) {
+                    const cell = document.createElement('td');
+                    cell.textContent = String(value);
+                    tr.appendChild(cell);
+                });
+            body.appendChild(tr);
+        });
+        if (!baselines.length) byId('tuning-baseline-status').textContent = 'No saved baselines in this browser.';
+        else byId('tuning-baseline-status').textContent = baselines.length + ' iterations saved locally; newest 24 retained.';
+    }
 
     function values(name) {
         const signal = tracker.store.signals[name];
@@ -34,6 +101,10 @@
     function bindControls() {
         if (controlsBound) return;
         controlsBound = true;
+        loadBaselines();
+        baselines.forEach(function (row) { if (row.status === 'Acquiring') row.status = 'Interrupted'; });
+        saveBaselines();
+        renderTable();
         loadSetting('tuning-target-frequency', 30000000);
         loadSetting('tuning-target-separation', 0);
         loadSetting('tuning-tolerance', 1000);
@@ -43,6 +114,27 @@
                 update();
             });
         });
+        byId('tuning-acquire-button').addEventListener('click', function () {
+            if (!tracker.sendCommand(1)) return;
+            const row = {iteration: nextIteration++, status: 'Acquiring', checked: true,
+                afterSequence: Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0))};
+            baselines.push(row);
+            if (baselines.length > maxBaselines) baselines.shift();
+            pendingIteration = row.iteration;
+            saveBaselines();
+            update();
+        });
+        byId('tuning-cancel-button').addEventListener('click', function () {
+            if (!tracker.sendCommand(2)) return;
+            const row = baselines.find(function (candidate) { return candidate.iteration === pendingIteration; });
+            if (row) {
+                row.status = 'Cancelled';
+                pendingIteration = null;
+                saveBaselines();
+                update();
+            }
+        });
+        captureBaseline();
     }
 
     function resonanceEstimates() {
@@ -128,21 +220,116 @@
             signalSequence.length === 1 && Number(signalSequence[0]) === sequence && frequency.length >= 2 &&
             real.length === frequency.length && imag.length === frequency.length;
         if (!coherent) return null;
+        const magnitude = real.map(function (value, index) { return Math.hypot(value, imag[index]); });
+        const refineSensor = values('RT_REFINE_SENSOR_ID');
+        const refineFrequency = values('RT_REFINE_FREQUENCY_HZ');
+        const refineReal = values('RT_REFINE_RE');
+        const refineImag = values('RT_REFINE_IM');
+        let minimum = null;
+        for (let index = 0; index < refineSensor.length && index < refineFrequency.length &&
+             index < refineReal.length && index < refineImag.length; ++index) {
+            if (Number(refineSensor[index]) !== 1) continue;
+            const point = {
+                frequency: Number(refineFrequency[index]),
+                magnitude: Math.hypot(Number(refineReal[index]), Number(refineImag[index])),
+                scope: 'sensor 1 refinement'
+            };
+            if (Number.isFinite(point.frequency) && Number.isFinite(point.magnitude) &&
+                (minimum === null || point.magnitude < minimum.magnitude)) minimum = point;
+        }
+        if (minimum === null) {
+            magnitude.forEach(function (value, index) {
+                if (!Number.isFinite(value)) return;
+                if (minimum === null || value < minimum.magnitude)
+                    minimum = {frequency: frequency[index], magnitude: value, scope: 'overview fallback'};
+            });
+        }
         return {
             frequency: frequency,
-            magnitude: real.map(function (value, index) { return Math.hypot(value, imag[index]); })
+            magnitude: magnitude,
+            minimum: minimum
         };
     }
 
-    function drawBaseline(data, estimates, targetFrequency, targetSeparation) {
+    function captureBaseline() {
+        const sequence = Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0));
+        const complete = Boolean(tracker.parameter('RT_BASELINE_COMPLETE', false));
+        const valid = Boolean(tracker.parameter('RT_BASELINE_VALID', false));
+        if (complete && valid && sequence > 0 && sequence !== lastCapturedSequence) {
+            const curve = baselineData();
+            if (curve && Number(tracker.parameter('RT_RESONANCE_COUNT', 0)) > 0 &&
+                Number.isFinite(Number(tracker.parameter('RT_RESONANCE_FREQUENCY_HZ', NaN)))) {
+                const currentFrequency = Number(tracker.parameter('RT_RESONANCE_FREQUENCY_HZ', NaN));
+                const alreadySaved = baselines.some(function (saved) {
+                    return saved.status === 'Complete' && saved.sequence === sequence &&
+                        saved.fres === currentFrequency && saved.curve &&
+                        saved.curve.frequency[0] === curve.frequency[0] &&
+                        saved.curve.frequency.length === curve.frequency.length;
+                });
+                if (alreadySaved && pendingIteration === null) {
+                    lastCapturedSequence = sequence;
+                    return;
+                }
+                let row = baselines.find(function (candidate) {
+                    return candidate.iteration === pendingIteration && sequence > candidate.afterSequence;
+                });
+                if (!row) {
+                    row = {iteration: nextIteration++, checked: true};
+                    baselines.push(row);
+                }
+                row.status = 'Complete';
+                row.sequence = sequence;
+                row.curve = curve;
+                row.fres = currentFrequency;
+                row.q = Number(tracker.parameter('RT_RESONANCE_Q', NaN));
+                row.fwhm = Number(tracker.parameter('RT_RESONANCE_FWHM_HZ', NaN));
+                row.fit = Boolean(tracker.parameter('RT_RESONANCE_MODEL_VALID', false)) ? 'Complex' : 'Fallback';
+                row.noise = row.fit === 'Complex' && Boolean(tracker.parameter('RT_RESONANCE_NOISE_VALID', false)) ?
+                    Number(tracker.parameter('RT_RESONANCE_NOISE', NaN)) : NaN;
+                row.quality = row.fit === 'Complex' ? Number(tracker.parameter('RT_RESONANCE_MODEL_QUALITY', NaN)) : NaN;
+                row.slope = row.fit === 'Complex' && Boolean(tracker.parameter('RT_RESONANCE_LOCAL_SLOPE_VALID', false)) ?
+                    Number(tracker.parameter('RT_RESONANCE_LOCAL_SLOPE_PER_HZ', NaN)) : NaN;
+                row.se = Number(tracker.parameter('RT_RESONANCE_SE_HZ', NaN));
+                if (baselines.length > maxBaselines) baselines.shift();
+                pendingIteration = null;
+                lastCapturedSequence = sequence;
+                saveBaselines();
+                if (tracker.store.activeView === 'tuning') update();
+            }
+        }
+        if (pendingIteration !== null) {
+            const state = Number(tracker.parameter('RT_STATE', 0));
+            const row = baselines.find(function (candidate) { return candidate.iteration === pendingIteration; });
+            if (row && (state === 10 || (complete && !valid && sequence > row.afterSequence))) {
+                row.status = state === 10 ? 'Failed' : 'Rejected';
+                pendingIteration = null;
+                saveBaselines();
+            } else if (row && (state === 2 || state === 4)) {
+                row.seenActive = true;
+            } else if (row && row.seenActive && !complete && state !== 2 && state !== 4) {
+                row.status = 'Cancelled';
+                pendingIteration = null;
+                saveBaselines();
+            }
+        }
+    }
+
+    function drawBaseline(selected, estimates, targetFrequency, targetSeparation) {
         const canvas = byId('tuning-plot');
         const context = canvas.getContext('2d');
         context.clearRect(0, 0, canvas.width, canvas.height);
-        if (!data) return null;
-        const finiteMagnitude = data.magnitude.filter(Number.isFinite);
+        if (!selected.length) return null;
+        const finiteMagnitude = [];
+        selected.forEach(function (row) {
+            row.curve.magnitude.filter(Number.isFinite).forEach(function (value) { finiteMagnitude.push(value); });
+            if (row.curve.minimum && Number.isFinite(row.curve.minimum.magnitude))
+                finiteMagnitude.push(row.curve.minimum.magnitude);
+        });
         if (!finiteMagnitude.length) return null;
-        const xMinimum = data.frequency[0];
-        const xMaximum = data.frequency[data.frequency.length - 1];
+        const xMinimum = Math.min.apply(null, selected.map(function (row) { return row.curve.frequency[0]; }));
+        const xMaximum = Math.max.apply(null, selected.map(function (row) {
+            return row.curve.frequency[row.curve.frequency.length - 1];
+        }));
         const xSpan = xMaximum - xMinimum || 1;
         const yMinimum = Math.min.apply(null, finiteMagnitude);
         const yMaximum = Math.max.apply(null, finiteMagnitude);
@@ -160,23 +347,29 @@
         context.fillText(yMinimum.toFixed(4), left - 7, bottom);
         context.textAlign = 'left';
 
-        context.strokeStyle = '#d5f36a';
-        context.lineWidth = 2;
-        context.beginPath();
-        data.frequency.forEach(function (frequency, index) {
-            if (index) context.lineTo(x(frequency), y(data.magnitude[index]));
-            else context.moveTo(x(frequency), y(data.magnitude[index]));
+        selected.forEach(function (row) {
+            const data = row.curve;
+            const color = colors[(row.iteration - 1) % colors.length];
+            context.strokeStyle = color;
+            context.lineWidth = row === selected[selected.length - 1] ? 2 : 1.5;
+            context.beginPath();
+            data.frequency.forEach(function (frequency, index) {
+                if (index) context.lineTo(x(frequency), y(data.magnitude[index]));
+                else context.moveTo(x(frequency), y(data.magnitude[index]));
+            });
+            context.stroke();
+            context.fillStyle = color;
+            context.fillText('#' + row.iteration, x(data.frequency[0]) + 4,
+                y(data.magnitude[0]) - 5);
         });
-        context.stroke();
 
-        let minimumIndex = 0;
-        data.magnitude.forEach(function (value, index) {
-            if (value < data.magnitude[minimumIndex]) minimumIndex = index;
-        });
-        context.fillStyle = '#69d7c6';
-        context.beginPath();
-        context.arc(x(data.frequency[minimumIndex]), y(data.magnitude[minimumIndex]), 5, 0, 2 * Math.PI);
-        context.fill();
+        const latest = selected[selected.length - 1].curve;
+        if (latest.minimum) {
+            context.fillStyle = '#69d7c6';
+            context.beginPath();
+            context.arc(x(latest.minimum.frequency), y(latest.minimum.magnitude), 5, 0, 2 * Math.PI);
+            context.fill();
+        }
 
         function marker(frequency, color, dashed) {
             if (!Number.isFinite(frequency) || frequency < xMinimum || frequency > xMaximum) return;
@@ -191,7 +384,7 @@
         });
         marker(targetFrequency, '#9d8cff', true);
         if (targetSeparation > 0) marker(targetFrequency + targetSeparation, '#9d8cff', true);
-        return {frequency: data.frequency[minimumIndex], magnitude: data.magnitude[minimumIndex]};
+        return latest.minimum;
     }
 
     function update() {
@@ -243,19 +436,27 @@
         setNumber('tuning-reference-noise', referenceNoise, 4, '%');
         setNumber('tuning-reflection-noise', reflectionNoise, 4, '%');
 
-        const data = baselineData();
-        const minimum = drawBaseline(data, estimates, targetFrequency, targetSeparation);
+        const selected = baselines.filter(function (row) { return row.checked && row.status === 'Complete'; });
+        const minimum = drawBaseline(selected, estimates, targetFrequency, targetSeparation);
+        renderTable();
+        const state = Number(tracker.parameter('RT_STATE', 0));
+        const active = state === 2 || state === 4;
+        byId('tuning-acquire-button').disabled = pendingIteration !== null || active || state === 5 ||
+            (state >= 6 && state <= 9);
+        byId('tuning-cancel-button').disabled = !active;
         setNumber('tuning-min-reflection', minimum ? minimum.magnitude : NaN, 6);
         byId('tuning-min-reflection-frequency').textContent = minimum ?
-            'at ' + minimum.frequency.toFixed(1) + ' Hz' : 'no complete scan';
+            'at ' + minimum.frequency.toFixed(1) + ' Hz / ' + minimum.scope : 'no complete refinement';
         byId('tuning-summary').textContent = minimum ?
-            'Minimum measured |R| at ' + minimum.frequency.toFixed(1) + ' Hz. Targets and fitted resonances are overlaid.' :
-            'No completed coherent baseline is available.';
+            selected.length + ' checked baseline(s). Latest checked minimum |R| in ' + minimum.scope +
+                ' at ' + minimum.frequency.toFixed(1) + ' Hz.' :
+            'Check a completed baseline in the table to display its curve.';
     }
 
     tracker.registerDashboard('tuning', {
         enter: function () { bindControls(); update(); },
         update: update,
+        observe: function () { if (controlsBound) captureBaseline(); },
         leave: function () {}
     });
 }(window.ResonanceTracker));

@@ -33,9 +33,9 @@ The tuning dashboard is also browser-local. It combines the latest coherent
 tracking estimate (falling back to the last valid baseline fit), the completed
 baseline curve, and raw-IQ statistics. Its target frequency, target separation,
 and tolerance are local display settings; changing them never changes FPGA or
-tracker state. Reference-channel magnitude is labelled as an uncalibrated
-transfer proxy because the current interface has no calibrated transmission or
-delivered-power measurement.
+tracker state. The view does not infer amplitude transfer or delivered power:
+the current interface exposes incident and reflected/reference I/Q but no
+transmission channel.
 
 ## State transitions
 
@@ -220,8 +220,21 @@ Raw acquisition runs at the fastest ready-driven rate supported by the current
 window. Web publication defaults to 20 Hz and remains independent. Raw history
 is bounded to 128 points. Baseline has exactly 101 overview points and
 diagnostics exactly five points. Hidden dashboards receive no render calls and
-own no timers. The tuning view redraws only while visible and retains no
-additional measurement history.
+own no timers. The tuning view redraws only while visible. Its Acquire Baseline
+button sends the existing baseline command using the current backend baseline
+configuration. It observes completed, sequence-matched baseline publications
+even while another dashboard is selected and saves up to 24 completed curves
+in browser local storage. Each table checkbox controls one curve overlay; view
+selection sends no hardware command. Pending, failed, rejected, and cancelled
+attempts remain table rows without a curve. The table reports sensor 1. Fit
+identifies the complex model; Quality is the backend explained residual
+fraction. Noise is the RMS complex deviation of individual refinement windows
+from each point's coherent mean in normalized reflection units. Local slope is
+the magnitude of the fitted complex response difference across the two model
+samples bracketing the resonance, divided by effective frequency spacing, in
+1/Hz. SE is the existing frequency standard error in Hz. Raw I/Q is available
+from the Advanced diagnostics navigation menu; its RUN control remains
+independent of navigation.
 
 `RT_WINDOW_SHIFT` is global hardware acquisition configuration and its control
 is displayed in the application header. In `RAW_IQ`, a

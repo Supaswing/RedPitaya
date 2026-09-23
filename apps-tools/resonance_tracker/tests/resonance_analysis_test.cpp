@@ -76,6 +76,10 @@ void validSingleResonance()
     assert(std::abs(result.resonances[0].frequency_hz - 32150000.0) < 80000.0);
     assert(result.resonances[0].q > 20.0);
     assert(result.resonances[0].model.size() == result.resonances[0].refinement.size());
+    assert(result.resonances[0].refinement_noise < 1e-12);
+    assert(result.resonances[0].refinement_noise_valid);
+    assert(result.resonances[0].local_slope_per_hz > 0.0);
+    assert(result.resonances[0].local_slope_valid);
     assert(result.resonances[0].template_points.size() == 5);
 
     const DiagnosticResult diagnostics = acquireDiagnostics(17, result.resonances[0], source);
