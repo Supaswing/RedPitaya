@@ -634,6 +634,26 @@ void acquisition_loop()
                 telemetry.model_imag.clear();
                 telemetry.fit_frequency.clear();
                 telemetry.fit_fwhm.clear();
+                telemetry.track_sequence = 0;
+                telemetry.track_points_used = 0;
+                telemetry.track_sensor_count = 0;
+                telemetry.track_complete = false;
+                telemetry.track_recovery_required = false;
+                telemetry.track_sensor_id.clear();
+                telemetry.track_frequency.clear();
+                telemetry.track_q.clear();
+                telemetry.track_se.clear();
+                telemetry.track_residual.clear();
+                telemetry.track_gain.clear();
+                telemetry.track_requested_shift.clear();
+                telemetry.track_applied_shift.clear();
+                telemetry.track_loss_counter.clear();
+                telemetry.track_fit_valid.clear();
+                telemetry.track_point_sensor_id.clear();
+                telemetry.track_point_offset.clear();
+                telemetry.track_point_frequency.clear();
+                telemetry.track_point_real.clear();
+                telemetry.track_point_imag.clear();
             }
             BaselineConfig config;
             config.start_frequency_hz = static_cast<std::uint32_t>(baseline_start_hz.load());
@@ -759,7 +779,11 @@ void acquisition_loop()
                     set_activity(false, false);
                     continue;
                 }
-                tracking_sequence = 0;
+                {
+                    std::lock_guard<std::mutex> lock(telemetry_mutex);
+                    telemetry.track_complete = false;
+                    telemetry.track_recovery_required = false;
+                }
                 tracking_active = true;
             }
             set_activity(false, true);

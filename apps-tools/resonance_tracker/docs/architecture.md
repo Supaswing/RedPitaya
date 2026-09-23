@@ -9,7 +9,7 @@ dashboard modules -> shared browser store -> one WebSocket
                                       |
              one acquisition worker + InstrumentStateMachine
                          /                         \
-             BaselineAnalyzer              RawIqAcquisition
+       BaselineAnalyzer / FrequencyTracker       RawIqAcquisition
                          \                         /
                    RawIqMeasurementSource: R = REF / INC
                                       |
@@ -21,7 +21,8 @@ validated controls into atomics and publish one mutex-protected telemetry
 snapshot. A command carries a monotonically changing `RT_COMMAND_SEQUENCE`, so
 a stale completion cannot satisfy a newer request. Baseline and diagnostic
 arrays are replaced only after a complete acquisition; partial arrays are never
-published as valid.
+published as valid. Tracking sensor results and their 3/5-point measurements
+are likewise published as one sequence-stamped frame.
 
 The frontend has one transport and one shared store. `ACTIVE_VIEW` exists only
 in JavaScript. Dashboard `enter`, `update`, and `leave` methods render the store;
@@ -38,6 +39,10 @@ selecting a dashboard sends no hardware command. Only explicit buttons send an
 | BASELINE_ACQUIRING, RESONANCE_FINDING | cancel | STOPPED |
 | STOPPED, RAW_IQ, BASELINE_READY | start diagnostics | DIAGNOSTICS |
 | DIAGNOSTICS | complete/cancel | BASELINE_READY if a baseline exists, otherwise STOPPED |
+| BASELINE_READY | start tracking | TRACKING |
+| TRACKING, DEGRADED | good tracking frame | TRACKING |
+| TRACKING, DEGRADED | poor tracking frame | DEGRADED |
+| SEARCHING, TRACKING, DEGRADED, RELOCKING | stop tracking | BASELINE_READY |
 | STOPPED, BASELINE_READY, ERROR | start raw I/Q | RAW_IQ |
 | Any state | stop | STOPPED |
 | Any state | acquisition/analysis failure | ERROR |
@@ -88,7 +93,7 @@ Existing Milestone 1 parameters retain their names. `RT_STATE` now maps to:
 Commands:
 
 - `RT_COMMAND`: 1 start baseline, 2 cancel baseline, 3 start diagnostics,
-  4 cancel diagnostics.
+  4 cancel diagnostics, 5 start tracking, 6 stop tracking.
 - `RT_COMMAND_SEQUENCE`: client command sequence; `RT_COMMAND_ACK` acknowledges
   receipt.
 - `RT_BASELINE_START_HZ`, `RT_BASELINE_STOP_HZ`, and
@@ -102,6 +107,7 @@ Commands:
   radius is measured in coarse-scan points and defines a centered `2r+1`
   quadratic Savitzky-Golay window; a run requires at least `2r+5` overview
   points.
+- `RT_TRACK_POINTS` accepts only 3 or 5. It is fixed while tracking is active.
 
 Baseline/result scalars:
 
@@ -162,6 +168,31 @@ Each diagnostic point is the RTM-like tuple `(sequence, sensor_id,
 signed_offset, effective_frequency_hz, complex_response)`. The browser draws
 only the current or last complete sequence.
 
+Tracking scalars/signals:
+
+- `RT_TRACK_SEQUENCE`, `RT_TRACK_POINTS_USED`, `RT_TRACK_SENSOR_COUNT`,
+  `RT_TRACK_COMPLETE`, and `RT_TRACK_RECOVERY_REQUIRED` describe the latest
+  complete frame.
+- Per-sensor arrays are `RT_TRACK_SENSOR_ID`, `RT_TRACK_FREQUENCY_HZ`,
+  `RT_TRACK_Q`, `RT_TRACK_SE_HZ`, `RT_TRACK_NORMALIZED_RESIDUAL`,
+  `RT_TRACK_TEMPLATE_GAIN`, `RT_TRACK_REQUESTED_SHIFT_HZ`,
+  `RT_TRACK_APPLIED_SHIFT_HZ`, `RT_TRACK_LOSS_COUNTER`, and
+  `RT_TRACK_FIT_VALID`.
+- Point arrays are `RT_TRACK_POINT_SENSOR_ID`, `RT_TRACK_POINT_OFFSET`,
+  `RT_TRACK_POINT_FREQUENCY_HZ`, `RT_TRACK_POINT_RE`, and
+  `RT_TRACK_POINT_IM`. The browser groups them by sensor and signed offset.
+- `RT_TRACK_SIGNAL_SEQUENCE` must equal `RT_TRACK_SEQUENCE` before any of these
+  arrays are combined or displayed.
+
+Three-point mode samples offsets -1, 0, +1. Five-point mode samples -2 through
++2 and solves the five-parameter linearized complex fit. Both modes report the
+post-fit normalized residual, complex template gain magnitude, requested and
+applied shift, residual-based frequency SE, and live Q. A frame is poor when
+the fit is invalid/non-finite, the requested shift exceeds 0.40 spacing, the
+normalized residual exceeds 0.10, or gain is below 0.25. Poor frames apply zero
+shift; a good frame clears the loss counter. Three consecutive poor frames set
+`RT_TRACK_RECOVERY_REQUIRED`.
+
 ## Rates and bounded rendering
 
 Raw acquisition runs at the fastest ready-driven rate supported by the current
@@ -185,6 +216,8 @@ diagnostics acquisition.
 
 ## Scope boundary
 
-The `SEARCHING`, `TRACKING`, `DEGRADED`, and `RELOCKING` values reserve the
-Milestone 2B state contract. Continuous tracking, loss detection, and relocking
-are not started by this Milestone 2A implementation.
+This first Milestone 2B slice implements continuous 3/5-point tracking, quality
+estimation, loss counting, and `TRACKING`/`DEGRADED` transitions. It deliberately
+does not yet execute local relock scans: recovery-required remains visible and
+the estimator continues without moving its center on poor frames. Bounded local
+relock and full-baseline fallback remain the next 2B slice.

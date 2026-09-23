@@ -13,7 +13,9 @@ constexpr std::uint32_t kLossCycles = 3;
 TrackingQualityDecision evaluateTrackingQuality(const TrackingQualityInput& quality)
 {
     TrackingQualityDecision decision;
-    decision.poor_fit = !quality.fit_valid || quality.spacing_hz <= 0.0 ||
+    decision.poor_fit = !quality.fit_valid || !std::isfinite(quality.requested_shift_hz) ||
+                        !std::isfinite(quality.normalized_residual) || !std::isfinite(quality.template_gain) ||
+                        !std::isfinite(quality.spacing_hz) || quality.spacing_hz <= 0.0 ||
                         std::abs(quality.requested_shift_hz) > kLossShiftFraction * quality.spacing_hz ||
                         quality.normalized_residual > kLossResidualLimit || quality.template_gain < kLossGainMinimum;
     decision.applied_shift_hz = decision.poor_fit ? 0.0 : quality.requested_shift_hz;

@@ -283,6 +283,12 @@ TrackingFrame FrequencyTracker::acquire(std::uint64_t sequence, ComplexMeasureme
         TrackingSensorResult result;
         result.sensor_id = resonance.sensor_id;
         result.fit_valid = points_ == 5 ? fitFive(resonance, live, result) : fitThree(resonance, live, result);
+        if (!result.fit_valid) {
+            result.requested_shift_hz = 0.0;
+            result.frequency_se_hz = resonance.spacing_hz;
+            result.normalized_residual = 1.0;
+            result.template_gain = 0.0;
+        }
         TrackingQualityInput quality;
         quality.fit_valid = result.fit_valid;
         quality.requested_shift_hz = result.requested_shift_hz;

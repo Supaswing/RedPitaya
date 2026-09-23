@@ -27,12 +27,12 @@
 | `rt_remove_quadratic_background`, `rt_resonance_score`, `rt_fit_complex_resonance_model` | Complex background removal and Lorentzian model search | No | `resonance_analysis.cpp` | Faithful double-precision adaptation; publish reconstructed complex model for plotting | Valid resonance replay | 2A ported |
 | `rt_complex_curvature`, `rt_quadratic` fallback | Estimate center/width when the complex model fails | No | `fitCurvatureFallback` | Preserve five-point quadratic and crossing behavior | Weak/non-model data still needs captured golden input | 2A ported; golden case pending |
 | replicate loop in `rt_refine_resonance` | Frequency standard error | No | complex-model and curvature fit helpers | Preserve standard-error calculation; use `double` | Deterministic identical replicates and future noisy captures | 2A ported |
-| `rt_prepare_complex_fit`, `rt_design_row`, `rt_fit_shift_3`, `rt_fit_shift_5` | Tracking template, gain, shift, residual and SE | No | Future tracker engine/fit module | Port only for 2B after golden comparison | NanoVNA captures and quality tests | 2B pending |
-| `resonance_tracker_quality.c::resonance_tracker_evaluate_fit` | Quality thresholds, loss counter, apply-shift/recovery decision | No | Future `tracking_quality.*` | Direct typed adaptation with threshold tests | `test/Test_resonance_tracker.c` | 2B pending |
+| `rt_prepare_complex_fit`, `rt_design_row`, `rt_fit_shift_3`, `rt_fit_shift_5`, `rt_calculate_live_q` | Tracking template, gain, shift, residual, SE, and live Q | No | `tracker_engine.*` | Faithful double-precision typed adaptation behind `ComplexMeasurementSource` | Synthetic shifted-resonance 3/5-point tests; captured golden data pending | 2B ported |
+| `resonance_tracker_quality.c::resonance_tracker_evaluate_fit` | Quality thresholds, loss counter, apply-shift/recovery decision | No | `tracking_quality.*` | Direct typed adaptation plus non-finite metric rejection | Threshold, loss-counter, and non-finite tests | 2B ported |
 | `rt_local_relock`, `rt_recover_tracking` | Two bounded local relock attempts then full baseline | Frequency acquisition adapted | Future tracker engine | Preserve bounds/decision policy; replace acquisition and scheduling | Captures needed for success/failure cases | 2B pending |
 | `RTB*` emitters in `resonance_tracker_baseline` | Baseline configuration, candidates, refine ranges, results, model and points | Serialization only | Structured baseline telemetry | Preserve units and meanings, not CSV internally | `doc/resonance_tracker.md` | 2A partial: structured equivalents, no UART adapter |
 | `RTM` emitter in `resonance_tracker_process` | Coherent signed-offset complex frame | Serialization only | `DiagnosticResult` and diagnostic signals | Preserve sequence/id/offset/effective-frequency/complex tuple | Five-point diagnostic replay | 2A ported |
-| `RTD`, `RTQ` emitters | Per-frame estimates and quality | Serialization only | Future tracking snapshot | Typed structures first; optional versioned CSV adapter | Tracking replay pending | 2B pending |
+| `RTD`, `RTQ` emitters | Per-frame estimates and quality | Serialization only | `TrackingFrame`, tracking parameters/signals | Typed structures and sequence-coherent web frames; optional versioned CSV adapter | Synthetic 3/5-point replay; captured replay pending | 2B adapted |
 | `resonance_tracker_status` `RTS` emitter | `baseline_valid,running,sensors,points,debug,start,stop,f1,f2,q1,q2` | Serialization/status | Instrument state plus future tracking telemetry | Do not reuse NanoVNA display state as hardware state | State-machine tests | 2A state model ported; full fields pending |
 | static fixed work buffers | Allocation and ownership | NanoVNA memory-layout-specific | Worker-owned vectors/results | Preserve bounded sizes, not fixed global layout | Unit tests and target memory observation | Adapted |
 
@@ -71,10 +71,13 @@ inside the existing raw-IQ path and its adapter.
 
 ## Golden-data gaps
 
-Current replay tests generate deterministic captured complex traces and cover a
+Current replay tests generate deterministic complex traces and cover a
 valid resonance, two candidates, no acceptable resonance, cancellation, and an
-RTM-like five-point frame. They do not yet use a checked-in real NanoVNA or Red
-Pitaya capture. Before threshold tuning or Milestone 2B, add representative
+RTM-like five-point frame. The tracking tests also exercise 3/5-point shifted
+resonances, configuration rejection, quality thresholds, non-finite metrics,
+the three-frame loss counter, and zero center motion during poor frames. They do
+not yet use a checked-in real NanoVNA
+or Red Pitaya capture. Before threshold tuning or relock implementation, add representative
 captured data for noisy curvature, nearby candidates, weak coupling, rapid
 shift, degraded fit, temporary loss, successful relock, and failed relock, with
 expected records and explicit tolerances.

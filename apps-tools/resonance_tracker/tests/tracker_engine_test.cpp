@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,15 @@ public:
 
 private:
     double center_hz_;
+};
+
+class FlatSource final : public ComplexMeasurementSource {
+public:
+    bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
+    {
+        measurement = {frequency_hz, frequency_hz, 0.0, 0.0};
+        return true;
+    }
 };
 
 ResonanceEstimate baselineEstimate()
@@ -87,6 +97,42 @@ void qualityCounter()
     decision = evaluateTrackingQuality(input);
     assert(!decision.poor_fit && decision.loss_counter == 0);
 }
+
+void rejectsInvalidConfigurationAndMetrics()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(!tracker.configure({baselineEstimate()}, 4, error));
+    assert(!error.empty());
+
+    TrackingQualityInput input;
+    input.fit_valid = true;
+    input.spacing_hz = 60000.0;
+    input.template_gain = 1.0;
+    input.normalized_residual = 0.10;
+    input.requested_shift_hz = -24000.0;
+    assert(!evaluateTrackingQuality(input).poor_fit);
+    input.normalized_residual = std::numeric_limits<double>::quiet_NaN();
+    assert(evaluateTrackingQuality(input).poor_fit);
+}
+
+void poorFramesDoNotMoveCenter(std::size_t points)
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, points, error));
+    FlatSource source;
+    for (std::uint64_t sequence = 1; sequence <= 3; ++sequence) {
+        const TrackingFrame frame = tracker.acquire(sequence, source);
+        assert(frame.complete && frame.degraded);
+        assert(frame.sensors.size() == 1);
+        assert(frame.sensors[0].poor_fit);
+        assert(frame.sensors[0].applied_shift_hz == 0.0);
+        assert(frame.sensors[0].frequency_hz == 32000000.0);
+        assert(frame.sensors[0].loss_counter == sequence);
+        assert(frame.recovery_required == (sequence == 3));
+    }
+}
 }
 
 int main()
@@ -94,5 +140,8 @@ int main()
     tracksSmallShift(3);
     tracksSmallShift(5);
     qualityCounter();
+    rejectsInvalidConfigurationAndMetrics();
+    poorFramesDoNotMoveCenter(3);
+    poorFramesDoNotMoveCenter(5);
     return 0;
 }
