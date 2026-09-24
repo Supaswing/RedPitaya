@@ -66,7 +66,7 @@
         number('publication-rate', 'RT_PUBLICATION_RATE_HZ', 1, true);
         byId('run').textContent = running ? 'STOP' : 'RUN';
         byId('run').className = running ? 'stop' : 'run';
-        byId('run').disabled = state !== 0 && state !== 1 && state !== 10;
+        byId('run').disabled = state !== 0 && state !== 1 && state !== 3 && state !== 10;
         byId('frequency').disabled = state === 2 || state === 4 || state === 5 || (state >= 6 && state <= 9);
         if (document.activeElement !== byId('frequency')) byId('frequency').value = tracker.parameter('RT_FREQUENCY_HZ', 32000000);
         if (document.activeElement !== byId('interval')) byId('interval').value = tracker.parameter('RT_TELEMETRY_MS', 50);
