@@ -2,6 +2,7 @@
     const byId = function (id) { return document.getElementById(id); };
     let controlsBound = false;
     let lastSequence = -1;
+    let lastVisibilityVersion = -1;
     let lastBaselineSequence = null;
     let pendingPoints = null;
     const maximumHistory = 180;
@@ -29,6 +30,12 @@
         frequencyHistory[2] = [];
         const canvas = byId('tracking-frequency-plot');
         canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        ['tracking-histogram', 'tracking-quality-plot', 'tracking-complex-plot'].forEach(function (id) {
+            const plot = byId(id);
+            plot.getContext('2d').clearRect(0, 0, plot.width, plot.height);
+        });
+        byId('tracking-stat-1').textContent = '-';
+        byId('tracking-stat-2').textContent = '-';
     }
 
     function drawFrequencyHistory() {
@@ -78,7 +85,7 @@
         context.fillText(String(lastHistorySequence), right, canvas.height - 8);
         context.textAlign = 'left';
         series.forEach(function (item) {
-            if (!item.points.length) return;
+            if (!item.points.length || !tracker.sensorVisible(item.sensor)) return;
             context.strokeStyle = item.sensor === 1 ? '#d5f36a' : '#69d7c6';
             context.lineWidth = 2;
             context.beginPath();
@@ -95,7 +102,100 @@
         });
     }
 
-    function renderFrame() {
+    function drawStatistics() {
+        const histogram = byId('tracking-histogram');
+        const histogramContext = histogram.getContext('2d');
+        const quality = byId('tracking-quality-plot');
+        const qualityContext = quality.getContext('2d');
+        histogramContext.clearRect(0, 0, histogram.width, histogram.height);
+        qualityContext.clearRect(0, 0, quality.width, quality.height);
+        const visible = [1, 2].filter(tracker.sensorVisible);
+        const frequencies = [];
+        let residualMax = 0.1;
+        visible.forEach(function (sensor) {
+            const history = frequencyHistory[sensor];
+            if (!history.length) return;
+            const mean = history.reduce(function (sum, p) { return sum + p.frequency; }, 0) / history.length;
+            const variance = history.reduce(function (sum, p) { return sum + Math.pow(p.frequency - mean, 2); }, 0) /
+                Math.max(1, history.length - 1);
+            byId('tracking-stat-' + sensor).textContent = mean.toFixed(1) + ' / ' + Math.sqrt(variance).toFixed(1);
+            history.forEach(function (p) {
+                frequencies.push(p.frequency);
+                if (Number.isFinite(p.residual)) residualMax = Math.max(residualMax, p.residual);
+            });
+        });
+        [1, 2].filter(function (sensor) { return !visible.includes(sensor); }).forEach(function (sensor) {
+            byId('tracking-stat-' + sensor).textContent = '-';
+        });
+        if (!frequencies.length) return;
+        const minimum = Math.min.apply(null, frequencies), maximum = Math.max.apply(null, frequencies);
+        const span = Math.max(1, maximum - minimum), bins = 16;
+        visible.forEach(function (sensor) {
+            const history = frequencyHistory[sensor], counts = Array(bins).fill(0);
+            history.forEach(function (p) {
+                const bin = Math.min(bins - 1, Math.floor((p.frequency - minimum) / span * bins));
+                counts[bin] += 1;
+            });
+            const maxCount = Math.max.apply(null, counts.concat(1));
+            histogramContext.fillStyle = sensor === 1 ? '#d5f36a' : '#69d7c6';
+            counts.forEach(function (count, bin) {
+                const x = 36 + bin * (histogram.width - 60) / bins;
+                const width = (histogram.width - 60) / bins;
+                const height = count / maxCount * (histogram.height - 46);
+                histogramContext.fillRect(x + (sensor === 2 ? width / 2 : 0), histogram.height - 26 - height,
+                    width / 2 - 1, height);
+            });
+            qualityContext.strokeStyle = sensor === 1 ? '#d5f36a' : '#69d7c6';
+            qualityContext.beginPath();
+            history.forEach(function (p, index) {
+                const x = 36 + index / Math.max(1, history.length - 1) * (quality.width - 60);
+                const y = quality.height - 25 - Math.min(residualMax, Math.max(0, p.residual || 0)) /
+                    residualMax * (quality.height - 45);
+                if (index) qualityContext.lineTo(x, y); else qualityContext.moveTo(x, y);
+            });
+            qualityContext.stroke();
+        });
+        histogramContext.fillStyle = qualityContext.fillStyle = '#8d9d98';
+        histogramContext.font = qualityContext.font = '11px monospace';
+        histogramContext.fillText(minimum.toFixed(1) + ' Hz', 36, histogram.height - 8);
+        histogramContext.fillText(maximum.toFixed(1) + ' Hz', histogram.width - 130, histogram.height - 8);
+        qualityContext.fillText('0', 8, quality.height - 25);
+        qualityContext.fillText(residualMax.toFixed(3), 3, 20);
+    }
+
+    function drawComplex(sensorId, real, imag, count) {
+        const canvas = byId('tracking-complex-plot');
+        const context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        const groups = {1: [], 2: []};
+        for (let index = 0; index < count; ++index) {
+            const sensor = Number(sensorId[index]);
+            const re = Number(real[index]), im = Number(imag[index]);
+            if (groups[sensor] && tracker.sensorVisible(sensor) && Number.isFinite(re) && Number.isFinite(im))
+                groups[sensor].push([re, im]);
+        }
+        const all = groups[1].concat(groups[2]);
+        if (!all.length) return;
+        const reMin = Math.min.apply(null, all.map(function (p) { return p[0]; }));
+        const reMax = Math.max.apply(null, all.map(function (p) { return p[0]; }));
+        const imMin = Math.min.apply(null, all.map(function (p) { return p[1]; }));
+        const imMax = Math.max.apply(null, all.map(function (p) { return p[1]; }));
+        const reSpan = reMax - reMin || 1, imSpan = imMax - imMin || 1;
+        [1, 2].forEach(function (sensor) {
+            context.strokeStyle = sensor === 1 ? '#d5f36a' : '#69d7c6';
+            context.fillStyle = context.strokeStyle;
+            context.beginPath();
+            groups[sensor].forEach(function (point, index) {
+                const x = 30 + (point[0] - reMin) / reSpan * (canvas.width - 60);
+                const y = canvas.height - 30 - (point[1] - imMin) / imSpan * (canvas.height - 60);
+                if (index) context.lineTo(x, y); else context.moveTo(x, y);
+                context.fillRect(x - 3, y - 3, 6, 6);
+            });
+            context.stroke();
+        });
+    }
+
+    function renderFrame(appendHistory) {
         const sequence = Number(tracker.parameter('RT_TRACK_SEQUENCE', 0));
         const signalSequence = values('RT_TRACK_SIGNAL_SEQUENCE');
         const sensorCount = Number(tracker.parameter('RT_TRACK_SENSOR_COUNT', 0));
@@ -110,7 +210,8 @@
         const appliedShift = values('RT_TRACK_APPLIED_SHIFT_HZ');
         const loss = values('RT_TRACK_LOSS_COUNTER');
         const fitValid = values('RT_TRACK_FIT_VALID');
-        const arrays = [frequency, q, se, residual, gain, requestedShift, appliedShift, loss, fitValid];
+        const sensorState = values('RT_TRACK_SENSOR_STATE');
+        const arrays = [frequency, q, se, residual, gain, requestedShift, appliedShift, loss, fitValid, sensorState];
         const coherent = Boolean(tracker.parameter('RT_TRACK_COMPLETE', false)) && sequence > 0 &&
             signalSequence.length === 1 && Number(signalSequence[0]) === sequence &&
             sensorCount > 0 && sensorId.length >= sensorCount &&
@@ -119,7 +220,8 @@
 
         clearSensor(1);
         clearSensor(2);
-        byId('tracking-sensor-2').hidden = sensorCount < 2;
+        byId('tracking-sensor-1').hidden = !tracker.sensorVisible(1) || !sensorId.slice(0, sensorCount).some(function (id) { return Number(id) === 1; });
+        byId('tracking-sensor-2').hidden = !tracker.sensorVisible(2) || !sensorId.slice(0, sensorCount).some(function (id) { return Number(id) === 2; });
         for (let index = 0; index < sensorCount; ++index) {
             const sensor = Number(sensorId[index]);
             if (sensor !== 1 && sensor !== 2) continue;
@@ -131,15 +233,17 @@
             setNumber('tracking-requested-shift-' + sensor, requestedShift[index], 1);
             setNumber('tracking-applied-shift-' + sensor, appliedShift[index], 1);
             setNumber('tracking-loss-' + sensor, loss[index], 0);
-            const good = Number(fitValid[index]) === 1 && Number(loss[index]) === 0;
-            byId('tracking-fit-' + sensor).textContent = good ? 'GOOD' : 'POOR';
+            byId('tracking-fit-' + sensor).textContent =
+                ({1: 'TRACKING', 2: 'DEGRADED', 3: 'LOST'})[Number(sensorState[index])] || 'UNKNOWN';
             const sensorFrequency = Number(frequency[index]);
-            if (Number.isFinite(sensorFrequency)) {
-                frequencyHistory[sensor].push({sequence: sequence, frequency: sensorFrequency});
+            if (appendHistory && Number.isFinite(sensorFrequency)) {
+                frequencyHistory[sensor].push({sequence: sequence, frequency: sensorFrequency,
+                    residual: Number(residual[index])});
                 if (frequencyHistory[sensor].length > maximumHistory) frequencyHistory[sensor].shift();
             }
         }
         drawFrequencyHistory();
+        drawStatistics();
 
         const pointSensor = values('RT_TRACK_POINT_SENSOR_ID');
         const pointOffset = values('RT_TRACK_POINT_OFFSET');
@@ -150,15 +254,16 @@
         const body = byId('tracking-point-table');
         body.textContent = '';
         if ([pointSensor, pointOffset, pointFrequency, pointReal, pointImag].every(function (array) {
-            return array.length >= expectedPoints;
+            return array.length === expectedPoints;
         })) {
+            drawComplex(pointSensor, pointReal, pointImag, expectedPoints);
             const rows = [];
             for (let index = 0; index < expectedPoints; ++index) rows.push(index);
             rows.sort(function (left, right) {
                 return Number(pointSensor[left]) - Number(pointSensor[right]) ||
                     Number(pointOffset[left]) - Number(pointOffset[right]);
             });
-            rows.forEach(function (index) {
+            rows.filter(function (index) { return tracker.sensorVisible(Number(pointSensor[index])); }).forEach(function (index) {
                 const row = document.createElement('tr');
                 [pointSensor[index], pointOffset[index], pointFrequency[index], pointReal[index], pointImag[index]].forEach(function (value, column) {
                     const cell = document.createElement(column < 2 ? 'th' : 'td');
@@ -205,10 +310,24 @@
         if (pendingPoints === null && document.activeElement !== byId('tracking-points'))
             byId('tracking-points').value = String(backendPoints);
         byId('tracking-points').disabled = active;
-        byId('tracking-start-button').disabled = state !== 3 || !baselineValid;
+        byId('tracking-start-button').disabled = state !== 3 || !baselineValid ||
+            Number(tracker.parameter('RT_BASELINE_ACTIVE_MASK', 0)) !== Number(tracker.parameter('RT_SENSOR_ENABLE_MASK', 1));
         byId('tracking-stop-button').disabled = !active;
-        const recovery = Boolean(tracker.parameter('RT_TRACK_RECOVERY_REQUIRED', false));
+        const recovery = Boolean(tracker.parameter('RT_TRACK_RECOVERY_REQUIRED', false)) ||
+            Boolean(tracker.parameter('RT_RELOCK_ACTIVE', false)) ||
+            Boolean(tracker.parameter('RT_RELOCK_FALLBACK', false));
         byId('tracking-recovery').hidden = !recovery;
+        if (recovery) {
+            const activeRelock = Boolean(tracker.parameter('RT_RELOCK_ACTIVE', false));
+            byId('tracking-recovery').textContent = activeRelock ?
+                'Local re-lock: sensor ' + tracker.parameter('RT_RELOCK_SENSOR_ID', '-') +
+                ', attempt ' + tracker.parameter('RT_RELOCK_ATTEMPT', '-') +
+                ', ' + Number(tracker.parameter('RT_RELOCK_PROGRESS', 0)).toFixed(1) + '% of scan budget.' :
+                String(tracker.parameter('RT_RELOCK_REASON', '') || 'Recovery is starting.');
+        }
+        const relockReason = String(tracker.parameter('RT_RELOCK_REASON', '') || '');
+        byId('tracking-relock-status').hidden = !relockReason;
+        byId('tracking-relock-status').textContent = relockReason;
         setNumber('tracking-rate', tracker.parameter('RT_TRACK_RATE_HZ', 0), 2);
         byId('tracking-summary').textContent = complete ?
             (state === 8 ? 'Tracking is degraded; poor frames do not move the center.' :
@@ -216,7 +335,12 @@
             (baselineValid ? 'Ready to track from the last completed baseline.' :
                 'Acquire a valid baseline before starting tracking.');
         const sequence = Number(tracker.parameter('RT_TRACK_SEQUENCE', 0));
-        if (sequence !== lastSequence && renderFrame()) lastSequence = sequence;
+        if (sequence !== lastSequence || lastVisibilityVersion !== tracker.sensorVisibilityVersion) {
+            if (renderFrame(sequence !== lastSequence)) {
+                lastSequence = sequence;
+                lastVisibilityVersion = tracker.sensorVisibilityVersion;
+            }
+        }
     }
 
     tracker.registerDashboard('tracking', {

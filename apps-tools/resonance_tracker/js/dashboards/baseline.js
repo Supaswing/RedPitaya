@@ -2,6 +2,7 @@
     const byId = function (id) { return document.getElementById(id); };
     let controlsBound = false;
     let lastSequence = -1;
+    let lastVisibilityVersion = -1;
     const pendingConfiguration = {};
 
     function values(name) {
@@ -33,6 +34,7 @@
         const modelImag = values('RT_MODEL_IM');
         const fitFrequency = values('RT_FIT_FREQUENCY_HZ');
         const fitFwhm = values('RT_FIT_FWHM_HZ');
+        const resultSensor = values('RT_BASELINE_RESULT_SENSOR_ID');
         const filterRadius = Number(tracker.parameter('RT_BASELINE_FILTER_RADIUS', 5));
         const canvas = byId('baseline-plot');
         const context = canvas.getContext('2d');
@@ -78,7 +80,7 @@
         context.textAlign = 'left';
 
         candidateLeft.forEach(function (value, index) {
-            if (index >= candidateRight.length) return;
+            if (index >= candidateRight.length || !tracker.sensorVisible(Number(resultSensor[index]))) return;
             const x0 = x(value), x1 = x(candidateRight[index]);
             context.fillStyle = index ? 'rgba(105,215,198,.10)' : 'rgba(213,243,106,.10)';
             context.fillRect(x0, top, Math.max(1, x1 - x0), magnitudeBottom - top);
@@ -93,7 +95,7 @@
         });
 
         fitFrequency.forEach(function (center, index) {
-            if (index >= fitFwhm.length) return;
+            if (index >= fitFwhm.length || !tracker.sensorVisible(Number(resultSensor[index]))) return;
             const halfWidth = 0.5 * Number(fitFwhm[index]);
             const x0 = x(Number(center) - halfWidth), x1 = x(Number(center) + halfWidth);
             context.fillStyle = 'rgba(245,138,117,.08)';
@@ -128,7 +130,8 @@
                 '#ffffff', true, false);
         }
         candidateLeft.forEach(function (leftFrequency, index) {
-            if (index >= candidateRight.length || Number(candidateIsInflection[index]) !== 1) return;
+            if (index >= candidateRight.length || Number(candidateIsInflection[index]) !== 1 ||
+                !tracker.sensorVisible(Number(resultSensor[index]))) return;
             [leftFrequency, candidateRight[index]].forEach(function (pointFrequency) {
                 const pointMagnitude = filteredAt(pointFrequency);
                 if (!Number.isFinite(pointMagnitude)) return;
@@ -172,7 +175,8 @@
             });
             context.stroke();
             candidateLeft.forEach(function (leftFrequency, index) {
-                if (index >= candidateRight.length || Number(candidateIsInflection[index]) !== 1) return;
+                if (index >= candidateRight.length || Number(candidateIsInflection[index]) !== 1 ||
+                    !tracker.sensorVisible(Number(resultSensor[index]))) return;
                 [leftFrequency, candidateRight[index]].forEach(function (pointFrequency) {
                     const px = x(pointFrequency);
                     context.strokeStyle = index ? '#69d7c6' : '#d5f36a';
@@ -186,6 +190,7 @@
         }
         ['#69d7c6', '#9d8cff'].forEach(function (color, sensorIndex) {
             const sensorId = sensorIndex + 1;
+            if (!tracker.sensorVisible(sensorId)) return;
             const refineF = [], refineM = [], modelF = [], modelM = [];
             refineSensor.forEach(function (id, index) {
                 if (Number(id) === sensorId && index < refineFrequency.length && index < refineMagnitude.length) {
@@ -232,7 +237,6 @@
             tracker.sendCommand(1, {
                 RT_BASELINE_START_HZ: {value: Number(byId('baseline-start').value)},
                 RT_BASELINE_STOP_HZ: {value: Number(byId('baseline-stop').value)},
-                RT_BASELINE_SENSOR_COUNT: {value: Number(byId('baseline-sensors').value)},
                 RT_BASELINE_OVERVIEW_POINTS: {value: Number(byId('baseline-overview-points').value)},
                 RT_BASELINE_FILTER_RADIUS: {value: Number(byId('baseline-filter-radius').value)},
                 RT_BASELINE_COARSE_AVERAGES: {value: Number(byId('baseline-coarse-averages').value)},
@@ -243,7 +247,6 @@
         byId('baseline-cancel-button').addEventListener('click', function () { tracker.sendCommand(2); });
         byId('baseline-start').addEventListener('change', function () { sendConfiguration('baseline-start', 'RT_BASELINE_START_HZ'); });
         byId('baseline-stop').addEventListener('change', function () { sendConfiguration('baseline-stop', 'RT_BASELINE_STOP_HZ'); });
-        byId('baseline-sensors').addEventListener('change', function () { sendConfiguration('baseline-sensors', 'RT_BASELINE_SENSOR_COUNT'); });
         byId('baseline-overview-points').addEventListener('change', function () { sendConfiguration('baseline-overview-points', 'RT_BASELINE_OVERVIEW_POINTS'); });
         byId('baseline-filter-radius').addEventListener('change', function () { sendConfiguration('baseline-filter-radius', 'RT_BASELINE_FILTER_RADIUS'); });
         byId('baseline-coarse-averages').addEventListener('change', function () { sendConfiguration('baseline-coarse-averages', 'RT_BASELINE_COARSE_AVERAGES'); });
@@ -263,14 +266,16 @@
             lastSequence = -1;
         }
         byId('baseline-summary').textContent = valid ? 'Last completed baseline is valid.' :
+            (active && Boolean(tracker.parameter('RT_RELOCK_FALLBACK', false)) ?
+                String(tracker.parameter('RT_RELOCK_REASON', 'Local relock failed; acquiring a new baseline.')) :
             (active ? 'Baseline acquisition and resonance finding are active.' :
-                (complete ? 'The completed baseline was rejected; see the backend error.' : 'No completed baseline is available.'));
+                (complete ? 'The completed baseline was rejected; see the backend error.' : 'No completed baseline is available.')));
         byId('baseline-progress').textContent = progress.toFixed(1);
-        byId('baseline-start-button').disabled = active || state === 5;
+        byId('baseline-start-button').disabled = active || state === 5 ||
+            Number(tracker.parameter('RT_SENSOR_ENABLE_MASK', 1)) === 0;
         byId('baseline-cancel-button').disabled = !active;
         byId('baseline-start').disabled = active;
         byId('baseline-stop').disabled = active;
-        byId('baseline-sensors').disabled = active;
         byId('baseline-overview-points').disabled = active;
         byId('baseline-filter-radius').disabled = active;
         byId('baseline-coarse-averages').disabled = active;
@@ -278,14 +283,13 @@
         byId('baseline-refine-averages').disabled = active;
         synchronizeInput('baseline-start', 'RT_BASELINE_START_HZ', 30000000);
         synchronizeInput('baseline-stop', 'RT_BASELINE_STOP_HZ', 34000000);
-        synchronizeInput('baseline-sensors', 'RT_BASELINE_SENSOR_COUNT', 1);
         synchronizeInput('baseline-overview-points', 'RT_BASELINE_OVERVIEW_POINTS', 101);
         synchronizeInput('baseline-filter-radius', 'RT_BASELINE_FILTER_RADIUS', 5);
         synchronizeInput('baseline-coarse-averages', 'RT_BASELINE_COARSE_AVERAGES', 3);
         synchronizeInput('baseline-refine-points', 'RT_BASELINE_REFINE_POINTS', 21);
         synchronizeInput('baseline-refine-averages', 'RT_BASELINE_REFINE_AVERAGES', 3);
         const measurementWindows = Number(byId('baseline-overview-points').value) *
-            Number(byId('baseline-coarse-averages').value) + Number(byId('baseline-sensors').value) *
+            Number(byId('baseline-coarse-averages').value) + Number(tracker.parameter('RT_BASELINE_SENSOR_COUNT', 1)) *
             (Number(byId('baseline-refine-points').value) * Number(byId('baseline-refine-averages').value) + 5);
         byId('baseline-measurements').textContent = measurementWindows.toFixed(0);
         format('resonance-frequency', 'RT_RESONANCE_FREQUENCY_HZ', 1, valid);
@@ -296,8 +300,32 @@
             byId('resonance-quality').textContent = 'CURVATURE FALLBACK';
         else
             format('resonance-quality', 'RT_RESONANCE_MODEL_QUALITY', 4, valid);
+        const table = byId('baseline-sensor-table');
+        table.textContent = '';
+        const ids = values('RT_BASELINE_RESULT_SENSOR_ID');
+        const frequencies = values('RT_BASELINE_RESULT_FREQUENCY_HZ');
+        const q = values('RT_BASELINE_RESULT_Q');
+        const se = values('RT_BASELINE_RESULT_SE_HZ');
+        const quality = values('RT_BASELINE_RESULT_MODEL_QUALITY');
+        if (valid && values('RT_BASELINE_SIGNAL_SEQUENCE').length === 1 &&
+            Number(values('RT_BASELINE_SIGNAL_SEQUENCE')[0]) === Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0)) &&
+            [frequencies, q, se, quality].every(function (array) { return array.length === ids.length; })) {
+            ids.forEach(function (id, index) {
+                if (!tracker.sensorVisible(Number(id))) return;
+                const row = document.createElement('tr');
+                [id, frequencies[index], q[index], se[index], quality[index]].forEach(function (value, column) {
+                    const cell = document.createElement(column === 0 ? 'th' : 'td');
+                    cell.textContent = Number(value).toFixed(column === 0 ? 0 : column === 4 ? 4 : 1);
+                    row.appendChild(cell);
+                });
+                table.appendChild(row);
+            });
+        }
         const sequence = Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0));
-        if (sequence !== lastSequence && draw()) lastSequence = sequence;
+        if ((sequence !== lastSequence || lastVisibilityVersion !== tracker.sensorVisibilityVersion) && draw()) {
+            lastSequence = sequence;
+            lastVisibilityVersion = tracker.sensorVisibilityVersion;
+        }
     }
 
     tracker.registerDashboard('baseline', {

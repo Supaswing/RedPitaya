@@ -29,6 +29,9 @@ enum class InstrumentCommand {
     StartTracking,
     TrackingGood,
     TrackingPoor,
+    BeginRelock,
+    RelockSucceeded,
+    RelockFallback,
     StopTracking,
     Fail,
 };

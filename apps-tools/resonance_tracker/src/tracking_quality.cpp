@@ -14,7 +14,9 @@ TrackingQualityDecision evaluateTrackingQuality(const TrackingQualityInput& qual
 {
     TrackingQualityDecision decision;
     decision.poor_fit = !quality.fit_valid || !std::isfinite(quality.requested_shift_hz) ||
+                        !std::isfinite(quality.frequency_se_hz) || quality.frequency_se_hz < 0.0 ||
                         !std::isfinite(quality.normalized_residual) || !std::isfinite(quality.template_gain) ||
+                        quality.normalized_residual < 0.0 || quality.template_gain < 0.0 ||
                         !std::isfinite(quality.spacing_hz) || quality.spacing_hz <= 0.0 ||
                         std::abs(quality.requested_shift_hz) > kLossShiftFraction * quality.spacing_hz ||
                         quality.normalized_residual > kLossResidualLimit || quality.template_gain < kLossGainMinimum;

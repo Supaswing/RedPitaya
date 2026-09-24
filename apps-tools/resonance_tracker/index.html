@@ -72,7 +72,7 @@
             <section class="controls baseline-controls">
                 <label>Start frequency [Hz]<input id="baseline-start" type="number" min="1" max="62500000" step="1" value="30000000"></label>
                 <label>Stop frequency [Hz]<input id="baseline-stop" type="number" min="1" max="62500000" step="1" value="34000000"></label>
-                <label>Resonances<input id="baseline-sensors" type="number" min="1" max="2" step="1" value="1"></label>
+                <fieldset class="sensor-controls"><legend>Logical resonances</legend><label><input id="sensor-enable-1" type="checkbox" checked> Enable 1</label><label><input id="sensor-enable-2" type="checkbox"> Enable 2</label><label><input id="sensor-show-1" type="checkbox" checked> Show 1</label><label><input id="sensor-show-2" type="checkbox" checked> Show 2</label></fieldset>
                 <label>Overview points<input id="baseline-overview-points" type="number" min="15" max="501" step="1" value="101"></label>
                 <label>Filter radius [points]<input id="baseline-filter-radius" type="number" min="1" max="25" step="1" value="5"></label>
                 <label>Coarse averages<input id="baseline-coarse-averages" type="number" min="1" max="32" step="1" value="3"></label>
@@ -83,31 +83,41 @@
             <p class="control-note">Start and stop are baseline-scan frequencies, independent of the single-frequency Raw I/Q control. Filter radius is the half-width of the centered quadratic smoothing window (total width = 2r+1); overview points must be at least 2r+5. Coarse candidates are accepted only for 50 &le; Q &le; 150. A refined model quality below 0.20 triggers the next candidate, up to three attempts per resonance. Changes are sent to the backend immediately and are fixed for the duration of a baseline run. The displayed window estimate excludes conditional retry measurements. Current configuration requires approximately <b id="baseline-measurements">371</b> coherent measurement windows.</p>
             <section class="analysis-panel">
                 <div class="section-head"><div><h2>Baseline and resonance fit</h2><p id="baseline-summary">No completed baseline is available.</p></div><span><b id="baseline-progress">0.0</b>%</span></div>
+                <p class="control-note">Primary result is the first enabled resonance. Per-sensor results appear below.</p>
                 <div class="fit-grid"><div><span>Frequency</span><strong id="resonance-frequency">-</strong><small>Hz</small></div><div><span>Q</span><strong id="resonance-q">-</strong></div><div><span>FWHM</span><strong id="resonance-fwhm">-</strong><small>Hz</small></div><div><span>Frequency SE</span><strong id="resonance-se">-</strong><small>Hz</small></div><div><span>Model quality</span><strong id="resonance-quality">-</strong></div></div>
+                <table><thead><tr><th>Sensor</th><th>Frequency [Hz]</th><th>Q</th><th>SE [Hz]</th><th>Model quality</th></tr></thead><tbody id="baseline-sensor-table"></tbody></table>
                 <canvas id="baseline-plot" width="900" height="380"></canvas>
                 <div class="plot-legend"><span class="legend-baseline">Overview |R|</span><span class="legend-filtered">Filtered |R|</span><span class="legend-curvature">Signed curvature</span><span class="legend-inflection">Selected zero-crossings</span><span class="legend-candidate">Candidate regions</span><span class="legend-refine">Refinement samples</span><span class="legend-model">Complex fitted model</span><span class="legend-center">Fitted center / FWHM</span></div>
             </section>
         </section>
         <section id="dashboard-diagnostics" class="dashboard" hidden>
             <section class="controls"><button id="diagnostics-start-button">ACQUIRE DIAGNOSTICS</button><button id="diagnostics-cancel-button" class="stop">CANCEL</button></section>
-            <section class="analysis-panel"><div class="section-head"><div><h2>RTM-like complex points</h2><p id="diagnostics-summary">No complete diagnostic point set is available.</p></div><span>sensor <b id="diagnostics-sensor">-</b> / sequence <b id="diagnostics-sequence">-</b></span></div><canvas id="diagnostics-plot" width="900" height="300"></canvas><table><thead><tr><th>Offset</th><th>Effective frequency [Hz]</th><th>Real(R)</th><th>Imag(R)</th></tr></thead><tbody id="diagnostics-table"></tbody></table></section>
+            <section class="analysis-panel"><div class="section-head"><div><h2>RTM-like complex points</h2><p id="diagnostics-summary">No complete diagnostic point set is available.</p></div><span>sequence <b id="diagnostics-sequence">-</b></span></div><label>Display sensor<select id="diagnostics-select-sensor"><option value="all">Both / enabled</option><option value="1">Sensor 1</option><option value="2">Sensor 2</option></select></label><canvas id="diagnostics-plot" width="900" height="300"></canvas><table><thead><tr><th>Sensor</th><th>Offset</th><th>Effective frequency [Hz]</th><th>Real(R)</th><th>Imag(R)</th></tr></thead><tbody id="diagnostics-table"></tbody></table></section>
         </section>
         <section id="dashboard-tracking" class="dashboard" hidden>
             <section class="controls tracking-controls">
                 <label>Tracking points<select id="tracking-points"><option value="3">3 points</option><option value="5" selected>5 points</option></select></label>
                 <button id="tracking-start-button">START TRACKING</button><button id="tracking-stop-button" class="stop">STOP TRACKING</button>
             </section>
-            <p class="control-note">Tracking uses the last valid baseline template. Three-point mode is faster; five-point mode fits frequency shift, complex gain, and complex offset with more redundancy. A poor fit applies no shift. Three consecutive poor frames request recovery; automatic re-lock is not enabled in this slice.</p>
+            <p class="control-note">Tracking uses the last valid baseline template. Three-point mode is faster; five-point mode fits frequency shift, complex gain, and complex offset with more redundancy. A poor fit applies no shift. Three consecutive poor frames trigger two bounded local re-lock scans, followed by a full baseline and tracking restart if both scans fail.</p>
             <section class="analysis-panel">
                 <div class="section-head"><div><h2>Frequency tracking</h2><p id="tracking-summary">No complete tracking frame is available.</p></div><span><b id="tracking-rate">0.00</b> frames/s (1 s average) / sequence <b id="tracking-sequence">-</b> / <b id="tracking-points-used">-</b> points</span></div>
-                <div id="tracking-recovery" class="tracking-warning" hidden>Recovery required: stop tracking and acquire a new baseline.</div>
+                <div id="tracking-recovery" class="tracking-warning" hidden></div>
+                <p id="tracking-relock-status" class="control-note" hidden></p>
                 <div class="tracking-sensors">
                     <article id="tracking-sensor-1"><div class="channel-head"><h2>Sensor 1</h2><span id="tracking-fit-1">NO FRAME</span></div><dl><dt>Frequency [Hz]</dt><dd id="tracking-frequency-1">-</dd><dt>Q</dt><dd id="tracking-q-1">-</dd><dt>Frequency SE [Hz]</dt><dd id="tracking-se-1">-</dd><dt>Normalized residual</dt><dd id="tracking-residual-1">-</dd><dt>Template gain</dt><dd id="tracking-gain-1">-</dd><dt>Requested shift [Hz]</dt><dd id="tracking-requested-shift-1">-</dd><dt>Applied shift [Hz]</dt><dd id="tracking-applied-shift-1">-</dd><dt>Loss counter</dt><dd id="tracking-loss-1">-</dd></dl></article>
                     <article id="tracking-sensor-2" hidden><div class="channel-head"><h2>Sensor 2</h2><span id="tracking-fit-2">NO FRAME</span></div><dl><dt>Frequency [Hz]</dt><dd id="tracking-frequency-2">-</dd><dt>Q</dt><dd id="tracking-q-2">-</dd><dt>Frequency SE [Hz]</dt><dd id="tracking-se-2">-</dd><dt>Normalized residual</dt><dd id="tracking-residual-2">-</dd><dt>Template gain</dt><dd id="tracking-gain-2">-</dd><dt>Requested shift [Hz]</dt><dd id="tracking-requested-shift-2">-</dd><dt>Applied shift [Hz]</dt><dd id="tracking-applied-shift-2">-</dd><dt>Loss counter</dt><dd id="tracking-loss-2">-</dd></dl></article>
                 </div>
                 <canvas id="tracking-frequency-plot" width="900" height="260"></canvas>
                 <div class="plot-legend"><span class="legend-track-1">Sensor 1 frequency</span><span class="legend-track-2">Sensor 2 frequency</span><span class="legend-note">bounded to 180 published frames; vertical axis is change from each sensor's first displayed frequency</span></div>
+                <div class="tracking-sensors"><article><span>Sensor 1 frequency mean / SD [Hz]</span><strong id="tracking-stat-1">-</strong></article><article><span>Sensor 2 frequency mean / SD [Hz]</span><strong id="tracking-stat-2">-</strong></article></div>
+                <canvas id="tracking-histogram" width="900" height="220"></canvas>
+                <div class="plot-legend"><span class="legend-track-1">Sensor 1 frequency distribution</span><span class="legend-track-2">Sensor 2 frequency distribution</span></div>
+                <canvas id="tracking-quality-plot" width="900" height="220"></canvas>
+                <div class="plot-legend"><span class="legend-track-1">Sensor 1 normalized residual</span><span class="legend-track-2">Sensor 2 normalized residual</span></div>
                 <table><thead><tr><th>Sensor</th><th>Offset</th><th>Effective frequency [Hz]</th><th>Real(R)</th><th>Imag(R)</th></tr></thead><tbody id="tracking-point-table"></tbody></table>
+                <canvas id="tracking-complex-plot" width="900" height="260"></canvas>
+                <div class="plot-legend"><span class="legend-track-1">Sensor 1 complex trajectory</span><span class="legend-track-2">Sensor 2 complex trajectory</span></div>
             </section>
         </section>
         <section id="dashboard-tuning" class="dashboard" hidden>
@@ -144,13 +154,14 @@
         </section>
     </main>
     <script src="js/state.js?v=2b5"></script>
+    <script src="js/sensors.js?v=3a1"></script>
     <script src="js/transport.js?v=2b2"></script>
     <script src="js/dashboards/stopped.js?v=2b2"></script>
     <script src="js/dashboards/raw_iq.js?v=2b6"></script>
-    <script src="js/dashboards/baseline.js?v=2b2"></script>
-    <script src="js/dashboards/diagnostics.js?v=2b2"></script>
-    <script src="js/dashboards/tracking.js?v=2b2"></script>
-    <script src="js/dashboards/tuning.js?v=2b5"></script>
+    <script src="js/dashboards/baseline.js?v=3a1"></script>
+    <script src="js/dashboards/diagnostics.js?v=3a1"></script>
+    <script src="js/dashboards/tracking.js?v=3a1"></script>
+    <script src="js/dashboards/tuning.js?v=3a1"></script>
     <script src="js/app.js?v=2b5"></script>
 </body>
 </html>

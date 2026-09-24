@@ -22,14 +22,14 @@
 | `rt_acquire` | Set frequency, acquire and normalize complex gamma | Yes | `ComplexMeasurementSource`, `RawIqMeasurementSource` | Replace with interface; calculate `REF/INC` only in the live adapter | Raw-IQ regression and replay source | 2A adapted |
 | `rt_scan_iq`, `rt_scan_mag2` | Coarse baseline and coherent averaging | Acquisition adapted | `BaselineAnalyzer::acquire` | Average complex response, not magnitudes | `resonance_analysis_test` | 2A ported |
 | 11-point SG loop in `resonance_tracker_baseline` | Smooth coarse magnitude squared | No | `BaselineAnalyzer::findCandidates` | Generalized to a runtime radius using equivalent centered quadratic least-squares coefficients; radius 5 exactly reproduces the NanoVNA kernel | Valid/multiple/missing replay cases plus radius 3/5 test | 2A adapted |
-| `rt_find_resonances`, `rt_find_extrema_candidates`, `rt_select_candidates` | Inflection pairing, extrema fallback, overlap-aware ranking | No | `BaselineAnalyzer::findCandidates` | Bounded-vector port with a Red Pitaya runtime acceptance gate of 50 <= frequency/FWHM <= 150; both curvature polarities are considered, and a local coarse complex-model center must stay inside its proposed lobe before receiving model-supported priority | Multiple-candidate, peak/dip polarity, and out-of-range-Q replay tests | 2A adapted |
+| `rt_find_resonances`, `rt_find_extrema_candidates`, `rt_select_candidates` | Inflection pairing, extrema fallback, overlap-aware ranking | No | `BaselineAnalyzer::findCandidates` | Bounded-vector port with a Red Pitaya runtime acceptance gate of 50 <= frequency/FWHM <= 150; both curvature polarities are considered, and hypotheses with zero coarse complex-model support are rejected | Multiple-candidate, peak/dip polarity, and out-of-range-Q replay tests | 2A adapted |
 | `rt_refine_resonance` | Dense candidate scan and refinement bounds | Acquisition adapted | `BaselineAnalyzer::acquire` | Acquire through interface; retry up to three ranked candidates per sensor when refined model fraction is below 0.20 | Replay tests | 2A adapted |
 | `rt_remove_quadratic_background`, `rt_resonance_score`, `rt_fit_complex_resonance_model` | Complex background removal and Lorentzian model search | No | `resonance_analysis.cpp` | Faithful double-precision adaptation; publish reconstructed complex model for plotting | Valid resonance replay | 2A ported |
-| `rt_complex_curvature`, `rt_quadratic` fallback | Estimate center/width when the complex model fails | No | `fitCurvatureFallback` | Preserve five-point quadratic and crossing behavior | Weak/non-model data still needs captured golden input | 2A ported; golden case pending |
+| `rt_complex_curvature`, `rt_quadratic` fallback | Estimate center/width when the complex model fails | No | `fitCurvatureFallback` | The helper is present but the current 0.20 complex-model acceptance gate does not call it; a captured weak/non-model case is needed before enabling it safely | Weak/non-model golden input pending | Present, not integrated |
 | replicate loop in `rt_refine_resonance` | Frequency standard error | No | complex-model and curvature fit helpers | Preserve standard-error calculation; use `double` | Deterministic identical replicates and future noisy captures | 2A ported |
 | `rt_prepare_complex_fit`, `rt_design_row`, `rt_fit_shift_3`, `rt_fit_shift_5`, `rt_calculate_live_q` | Tracking template, gain, shift, residual, SE, and live Q | No | `tracker_engine.*` | Faithful double-precision typed adaptation behind `ComplexMeasurementSource` | Synthetic shifted-resonance 3/5-point tests; captured golden data pending | 2B ported |
 | `resonance_tracker_quality.c::resonance_tracker_evaluate_fit` | Quality thresholds, loss counter, apply-shift/recovery decision | No | `tracking_quality.*` | Direct typed adaptation plus non-finite metric rejection | Threshold, loss-counter, and non-finite tests | 2B ported |
-| `rt_local_relock`, `rt_recover_tracking` | Two bounded local relock attempts then full baseline | Frequency acquisition adapted | Future tracker engine | Preserve bounds/decision policy; replace acquisition and scheduling | Captures needed for success/failure cases | 2B pending |
+| `rt_local_relock`, `rt_recover_tracking` | Two bounded local relock attempts then full baseline | Frequency acquisition adapted | `acquireLocalRelock`, `FrequencyTracker::relock`, worker fallback | Preserve 11/21 points, ±1.5/3 FWHM, 0.20 model fraction, 0.67–1.50 width ratio, and edge bounds; use live/replay source and worker generation cancellation | Shifted, expanded-window, flat, and cancelled replay cases; captured golden data pending | 2B adapted |
 | `RTB*` emitters in `resonance_tracker_baseline` | Baseline configuration, candidates, refine ranges, results, model and points | Serialization only | Structured baseline telemetry | Preserve units and meanings, not CSV internally | `doc/resonance_tracker.md` | 2A partial: structured equivalents, no UART adapter |
 | `RTM` emitter in `resonance_tracker_process` | Coherent signed-offset complex frame | Serialization only | `DiagnosticResult` and diagnostic signals | Preserve sequence/id/offset/effective-frequency/complex tuple | Five-point diagnostic replay | 2A ported |
 | `RTD`, `RTQ` emitters | Per-frame estimates and quality | Serialization only | `TrackingFrame`, tracking parameters/signals | Typed structures and sequence-coherent web frames; optional versioned CSV adapter | Synthetic 3/5-point replay; captured replay pending | 2B adapted |
@@ -75,9 +75,12 @@ Current replay tests generate deterministic complex traces and cover a
 valid resonance, two candidates, no acceptable resonance, cancellation, and an
 RTM-like five-point frame. The tracking tests also exercise 3/5-point shifted
 resonances, configuration rejection, quality thresholds, non-finite metrics,
-the three-frame loss counter, and zero center motion during poor frames. They do
-not yet use a checked-in real NanoVNA
-or Red Pitaya capture. Before threshold tuning or relock implementation, add representative
-captured data for noisy curvature, nearby candidates, weak coupling, rapid
+the three-frame loss counter, zero center motion during poor frames, first and
+expanded local relock, rejected local scans, and cancellation. They do not yet
+use a checked-in real complex-point capture for relock. The read-only NanoVNA
+logs `test4.csv` and `test_2_less_relock.csv` show local acceptance and
+full-baseline fallback event sequences, but omit the scan's complex inputs, so
+they cannot serve as numerical golden replays. Before threshold tuning, capture
+complex points for noisy curvature, nearby candidates, weak coupling, rapid
 shift, degraded fit, temporary loss, successful relock, and failed relock, with
 expected records and explicit tolerances.

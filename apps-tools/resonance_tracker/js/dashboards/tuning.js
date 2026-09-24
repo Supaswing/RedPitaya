@@ -156,9 +156,11 @@
         }
 
         const baselineCount = Number(tracker.parameter('RT_RESONANCE_COUNT', 0));
-        const fitFrequency = values('RT_FIT_FREQUENCY_HZ');
+        const fitFrequency = values('RT_BASELINE_RESULT_FREQUENCY_HZ');
+        const fitSensor = values('RT_BASELINE_RESULT_SENSOR_ID');
         if (Boolean(tracker.parameter('RT_BASELINE_VALID', false)) && baselineCount > 0 &&
-            fitFrequency.length >= baselineCount) {
+            fitFrequency.length >= baselineCount && fitSensor.length >= baselineCount &&
+            Number(values('RT_BASELINE_SIGNAL_SEQUENCE')[0]) === Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0))) {
             const result = {
                 source: 'BASELINE',
                 detail: 'sequence ' + Number(tracker.parameter('RT_BASELINE_SEQUENCE', 0)),
@@ -166,7 +168,8 @@
             };
             for (let index = 0; index < Math.min(2, baselineCount); ++index) {
                 const frequency = Number(fitFrequency[index]);
-                if (Number.isFinite(frequency)) result.frequencies[index + 1] = frequency;
+                const sensor = Number(fitSensor[index]);
+                if ((sensor === 1 || sensor === 2) && Number.isFinite(frequency)) result.frequencies[sensor] = frequency;
             }
             return result;
         }
@@ -393,8 +396,8 @@
         const targetSeparation = Math.abs(Number(byId('tuning-target-separation').value));
         const tolerance = Math.abs(Number(byId('tuning-tolerance').value));
         const estimates = resonanceEstimates();
-        const frequency1 = Number(estimates.frequencies[1]);
-        const frequency2 = Number(estimates.frequencies[2]);
+        const frequency1 = tracker.sensorVisible(1) ? Number(estimates.frequencies[1]) : NaN;
+        const frequency2 = tracker.sensorVisible(2) ? Number(estimates.frequencies[2]) : NaN;
         setNumber('tuning-frequency-1', frequency1, 1);
         setNumber('tuning-frequency-2', frequency2, 1);
         renderError('tuning-error-1', frequency1, targetFrequency, tolerance);

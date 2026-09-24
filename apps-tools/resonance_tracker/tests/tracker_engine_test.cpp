@@ -35,9 +35,34 @@ private:
 
 class FlatSource final : public ComplexMeasurementSource {
 public:
+    std::size_t count = 0;
     bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
     {
+        ++count;
         measurement = {frequency_hz, frequency_hz, 0.0, 0.0};
+        return true;
+    }
+};
+
+class ExpandedSource final : public ComplexMeasurementSource {
+public:
+    bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
+    {
+        const Complex value = frequency_hz <= 32360000 ? Complex{} : response(frequency_hz, 32500000.0, 120000.0);
+        measurement = {frequency_hz, frequency_hz, value.real(), value.imag()};
+        return true;
+    }
+};
+
+class DualSource final : public ComplexMeasurementSource {
+public:
+    bool lose_first = true;
+    bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
+    {
+        const Complex value = frequency_hz < 32500000 ?
+            (lose_first ? Complex{} : response(frequency_hz, 32200000.0, 120000.0)) :
+            response(frequency_hz, 33000000.0, 120000.0);
+        measurement = {frequency_hz, frequency_hz, value.real(), value.imag()};
         return true;
     }
 };
@@ -104,6 +129,10 @@ void rejectsInvalidConfigurationAndMetrics()
     std::string error;
     assert(!tracker.configure({baselineEstimate()}, 4, error));
     assert(!error.empty());
+    assert(!tracker.configure({baselineEstimate(), baselineEstimate()}, 5, error));
+    auto invalid = baselineEstimate();
+    invalid.template_points[0].real = std::numeric_limits<double>::quiet_NaN();
+    assert(!tracker.configure({invalid}, 5, error));
 
     TrackingQualityInput input;
     input.fit_valid = true;
@@ -113,6 +142,9 @@ void rejectsInvalidConfigurationAndMetrics()
     input.requested_shift_hz = -24000.0;
     assert(!evaluateTrackingQuality(input).poor_fit);
     input.normalized_residual = std::numeric_limits<double>::quiet_NaN();
+    assert(evaluateTrackingQuality(input).poor_fit);
+    input.normalized_residual = 0.01;
+    input.frequency_se_hz = std::numeric_limits<double>::quiet_NaN();
     assert(evaluateTrackingQuality(input).poor_fit);
 }
 
@@ -133,6 +165,94 @@ void poorFramesDoNotMoveCenter(std::size_t points)
         assert(frame.recovery_required == (sequence == 3));
     }
 }
+
+void loseTracking(FrequencyTracker& tracker)
+{
+    FlatSource source;
+    for (std::uint64_t sequence = 1; sequence <= 3; ++sequence)
+        assert(tracker.acquire(sequence, source).complete);
+}
+
+void localRelockSucceeds()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, 5, error));
+    loseTracking(tracker);
+    ShiftedSource source(32200000.0);
+    const auto relock = tracker.relock(30000000, 34000000, source);
+    assert(relock.success && !relock.cancelled && relock.sensors.size() == 1);
+    assert(relock.sensors[0].attempts == 1);
+    assert(relock.sensors[0].measured_points == 11);
+    assert(std::abs(relock.sensors[0].frequency_hz - 32200000.0) < 50000.0);
+    const auto next = tracker.acquire(4, source);
+    assert(next.complete && !next.recovery_required);
+    assert(next.sensors[0].loss_counter == 0);
+}
+
+void expandedRelockSucceeds()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, 5, error));
+    loseTracking(tracker);
+    ExpandedSource source;
+    const auto relock = tracker.relock(30000000, 34000000, source);
+    assert(relock.success && relock.sensors[0].attempts == 2);
+    assert(relock.sensors[0].measured_points == 32);
+}
+
+void failedRelockIsBounded()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, 5, error));
+    loseTracking(tracker);
+    FlatSource source;
+    const auto relock = tracker.relock(30000000, 34000000, source);
+    assert(!relock.success && !relock.cancelled && !relock.acquisition_error);
+    assert(relock.sensors[0].attempts == 2);
+    assert(source.count == 32);
+    assert(!relock.reason.empty());
+}
+
+void cancelledRelockStopsEarly()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, 5, error));
+    loseTracking(tracker);
+    FlatSource source;
+    const auto relock = tracker.relock(30000000, 34000000, source, [&source]() { return source.count >= 4; });
+    assert(!relock.success && relock.cancelled);
+    assert(source.count == 4);
+}
+
+void relockOnlyLostSensor()
+{
+    auto second = baselineEstimate();
+    second.sensor_id = 2;
+    second.frequency_hz = 33000000.0;
+    second.q = second.frequency_hz / second.fwhm_hz;
+    second.template_points.clear();
+    for (int offset = -2; offset <= 2; ++offset) {
+        const auto frequency = static_cast<std::uint32_t>(second.frequency_hz + offset * second.spacing_hz);
+        const auto value = response(frequency, second.frequency_hz, 120000.0);
+        second.template_points.push_back({frequency, frequency, value.real(), value.imag()});
+    }
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate(), second}, 5, error));
+    DualSource source;
+    for (std::uint64_t sequence = 1; sequence <= 3; ++sequence) {
+        const auto frame = tracker.acquire(sequence, source);
+        assert(frame.complete && frame.sensors.size() == 2);
+    }
+    source.lose_first = false;
+    const auto relock = tracker.relock(30000000, 34000000, source);
+    assert(relock.success && relock.sensors.size() == 1);
+    assert(relock.sensors[0].sensor_id == 1);
+}
 }
 
 int main()
@@ -143,5 +263,10 @@ int main()
     rejectsInvalidConfigurationAndMetrics();
     poorFramesDoNotMoveCenter(3);
     poorFramesDoNotMoveCenter(5);
+    localRelockSucceeds();
+    expandedRelockSucceeds();
+    failedRelockIsBounded();
+    cancelledRelockStopsEarly();
+    relockOnlyLostSensor();
     return 0;
 }

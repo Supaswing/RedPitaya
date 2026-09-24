@@ -37,6 +37,7 @@
     }
 
     function updateGlobalStatus() {
+        if (tracker.updateSensorControls) tracker.updateSensorControls();
         const nextState = Number(parameter('RT_STATE', 0));
         document.getElementById('instrument-state').textContent = stateName(nextState);
         const error = String(parameter('RT_ERROR', '') || '');

@@ -17,6 +17,9 @@ constexpr double kMinimumCandidateQ = 50.0;
 constexpr double kMaximumCandidateQ = 150.0;
 constexpr double kMinimumRefinedModelQuality = 0.20;
 constexpr std::size_t kCandidateAttemptsPerSensor = 3;
+constexpr double kRelockMinimumModelFraction = 0.20;
+constexpr double kRelockMinimumWidthRatio = 0.67;
+constexpr double kRelockMaximumWidthRatio = 1.50;
 constexpr double kEpsilon = 1e-18;
 
 using Complex = std::complex<double>;
@@ -284,7 +287,7 @@ double resonanceScore(const std::vector<Complex>& residual, double start, double
 }
 
 bool fitComplexModel(const std::vector<ComplexMeasurement>& points, const std::vector<std::vector<Complex>>& replicates,
-                     ResonanceEstimate& estimate)
+                     ResonanceEstimate& estimate, double prior_fwhm = 0.0)
 {
     static const std::array<double, 13> width_multipliers =
         {0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0};
@@ -303,17 +306,30 @@ bool fitComplexModel(const std::vector<ComplexMeasurement>& points, const std::v
     double best_score = -1.0;
     double best_f0 = estimate.frequency_hz;
     double best_hwhm = 0.5 * estimate.fwhm_hz;
+    const double minimum_hwhm = prior_fwhm > 0.0 ? 0.5 * kRelockMinimumWidthRatio * prior_fwhm : 0.0;
+    const double maximum_hwhm = prior_fwhm > 0.0 ? 0.5 * kRelockMaximumWidthRatio * prior_fwhm :
+                                                        std::numeric_limits<double>::infinity();
     int best_orientation = 1;
     for (int orientation : {-1, 1}) {
         for (std::size_t index = 2; index + 2 < points.size(); ++index) {
             const double f0 = start + index * step;
             for (double multiplier : width_multipliers) {
                 const double hwhm = step * multiplier;
+                if (hwhm < minimum_hwhm || hwhm > maximum_hwhm) continue;
                 const double score = resonanceScore(residual, start, step, f0, hwhm, orientation);
                 if (score > best_score) {
                     best_score = score;
                     best_f0 = f0;
                     best_hwhm = hwhm;
+                    best_orientation = orientation;
+                }
+            }
+            if (prior_fwhm > 0.0) {
+                const double score = resonanceScore(residual, start, step, f0, 0.5 * prior_fwhm, orientation);
+                if (score > best_score) {
+                    best_score = score;
+                    best_f0 = f0;
+                    best_hwhm = 0.5 * prior_fwhm;
                     best_orientation = orientation;
                 }
             }
@@ -328,6 +344,7 @@ bool fitComplexModel(const std::vector<ComplexMeasurement>& points, const std::v
             if (f0 < start + 2.0 * step || f0 > start + (points.size() - 3) * step) continue;
             for (double multiplier : refine_multipliers) {
                 const double hwhm = seed_hwhm * multiplier;
+                if (hwhm < minimum_hwhm || hwhm > maximum_hwhm) continue;
                 const double score = resonanceScore(residual, start, step, f0, hwhm, best_orientation);
                 if (score > best_score) {
                     best_score = score;
@@ -692,6 +709,9 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
     std::vector<ResonanceCandidate> hypotheses = pairs;
     for (const auto& candidate : extrema) retainCandidate(hypotheses, candidate);
     for (auto& candidate : hypotheses) candidate.selection_quality = coarseModelQuality(overview, candidate);
+    hypotheses.erase(std::remove_if(hypotheses.begin(), hypotheses.end(), [](const auto& candidate) {
+        return candidate.selection_quality <= kEpsilon;
+    }), hypotheses.end());
     selectCandidates(hypotheses, wanted, selected);
     return selected;
 }
@@ -709,7 +729,9 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
     }
     if (config.start_frequency_hz >= config.stop_frequency_hz || config.overview_points < 15 ||
         config.coarse_averages == 0 || config.refine_points < 5 || config.refine_averages == 0 ||
-        config.sensor_count == 0 || config.sensor_count > 2) {
+        config.sensor_count == 0 || config.sensor_count > 2 || config.sensor_enable_mask > 3 ||
+        config.sensor_count != static_cast<std::size_t>((config.sensor_enable_mask & 1u) +
+                                                         ((config.sensor_enable_mask >> 1) & 1u))) {
         result.error = "invalid baseline configuration";
         return result;
     }
@@ -790,7 +812,7 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
     result.candidates.clear();
     for (std::size_t sensor = 0; sensor < result.resonances.size(); ++sensor) {
         ResonanceEstimate& estimate = result.resonances[sensor];
-        estimate.sensor_id = static_cast<std::uint32_t>(sensor + 1);
+        estimate.sensor_id = (config.sensor_enable_mask == 2) ? 2u : static_cast<std::uint32_t>(sensor + 1);
         result.candidates.push_back(estimate.candidate);
         for (int offset = -2; offset <= 2; ++offset) {
             ComplexMeasurement point;
@@ -831,5 +853,80 @@ DiagnosticResult acquireDiagnostics(std::uint64_t sequence, const ResonanceEstim
         result.points.push_back(point);
     }
     result.complete = true;
+    return result;
+}
+
+LocalRelockResult acquireLocalRelock(std::uint32_t sensor_id, double center_hz, double prior_fwhm_hz,
+                                    std::uint32_t start_hz, std::uint32_t stop_hz,
+                                    ComplexMeasurementSource& source, const CancellationCheck& cancelled,
+                                    const RelockProgress& progress)
+{
+    LocalRelockResult result;
+    result.sensor_id = sensor_id;
+    if (!std::isfinite(center_hz) || !std::isfinite(prior_fwhm_hz) || prior_fwhm_hz <= 0.0 ||
+        start_hz >= stop_hz) {
+        result.reason = "invalid local relock bounds";
+        return result;
+    }
+    constexpr std::array<std::size_t, 2> point_counts{11, 21};
+    constexpr std::array<double, 2> half_span_fwhm{1.5, 3.0};
+    for (std::size_t attempt = 0; attempt < point_counts.size(); ++attempt) {
+        bool first_point = true;
+        result.attempts = attempt + 1;
+        const double scan_start = std::max(static_cast<double>(start_hz),
+                                           center_hz - half_span_fwhm[attempt] * prior_fwhm_hz);
+        const double scan_stop = std::min(static_cast<double>(stop_hz),
+                                          center_hz + half_span_fwhm[attempt] * prior_fwhm_hz);
+        if (scan_stop - scan_start < prior_fwhm_hz) {
+            result.reason = "local relock scan is clipped below one FWHM";
+            continue;
+        }
+        const double step = (scan_stop - scan_start) / static_cast<double>(point_counts[attempt] - 1);
+        std::vector<ComplexMeasurement> scan;
+        scan.reserve(point_counts[attempt]);
+        for (std::size_t point = 0; point < point_counts[attempt]; ++point) {
+            if (isCancelled(cancelled)) {
+                result.cancelled = true;
+                result.reason = "cancelled";
+                return result;
+            }
+            ComplexMeasurement measurement;
+            const auto frequency = roundedFrequency(scan_start + point * step);
+            if (!source.acquire(frequency, first_point, measurement, result.reason)) {
+                result.acquisition_error = true;
+                if (result.reason.empty()) result.reason = "local relock acquisition failed";
+                return result;
+            }
+            first_point = false;
+            scan.push_back(measurement);
+            ++result.measured_points;
+            if (progress) progress(sensor_id, attempt + 1, point + 1, point_counts[attempt]);
+        }
+        if (isCancelled(cancelled)) {
+            result.cancelled = true;
+            result.reason = "cancelled";
+            return result;
+        }
+        ResonanceEstimate fit;
+        fit.frequency_hz = center_hz;
+        fit.fwhm_hz = prior_fwhm_hz;
+        if (!fitComplexModel(scan, {}, fit, prior_fwhm_hz) || !fit.complex_model_valid) {
+            result.reason = "local relock model fit failed";
+            continue;
+        }
+        result.model_quality = fit.model_explained_fraction;
+        result.fitted_fwhm_hz = fit.fwhm_hz;
+        if (fit.model_explained_fraction < kRelockMinimumModelFraction ||
+            fit.fwhm_hz < kRelockMinimumWidthRatio * prior_fwhm_hz ||
+            fit.fwhm_hz > kRelockMaximumWidthRatio * prior_fwhm_hz ||
+            fit.frequency_hz <= scan_start + step || fit.frequency_hz >= scan_stop - step) {
+            result.reason = "local relock fit did not meet quality, width, or edge bounds";
+            continue;
+        }
+        result.frequency_hz = fit.frequency_hz;
+        result.success = true;
+        result.reason.clear();
+        return result;
+    }
     return result;
 }

@@ -39,6 +39,7 @@ struct BaselineConfig {
     std::size_t refine_points = 21;
     std::size_t refine_averages = 3;
     std::size_t sensor_count = 1;
+    std::uint32_t sensor_enable_mask = 1; // Logical resonance IDs; not FPGA input channels.
 };
 
 struct ResonanceCandidate {
@@ -123,3 +124,24 @@ struct DiagnosticResult {
 
 DiagnosticResult acquireDiagnostics(std::uint64_t sequence, const ResonanceEstimate& resonance,
                                     ComplexMeasurementSource& source, const CancellationCheck& cancelled = {});
+
+struct LocalRelockResult {
+    bool success = false;
+    bool cancelled = false;
+    bool acquisition_error = false;
+    std::uint32_t sensor_id = 0;
+    std::size_t attempts = 0;
+    std::size_t measured_points = 0;
+    double frequency_hz = 0.0;
+    double fitted_fwhm_hz = 0.0;
+    double model_quality = 0.0;
+    std::string reason;
+};
+
+using RelockProgress = std::function<void(std::uint32_t sensor_id, std::size_t attempt,
+                                          std::size_t completed, std::size_t total)>;
+
+LocalRelockResult acquireLocalRelock(std::uint32_t sensor_id, double center_hz, double prior_fwhm_hz,
+                                    std::uint32_t start_hz, std::uint32_t stop_hz,
+                                    ComplexMeasurementSource& source, const CancellationCheck& cancelled = {},
+                                    const RelockProgress& progress = {});

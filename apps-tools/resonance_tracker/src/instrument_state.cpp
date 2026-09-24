@@ -96,6 +96,15 @@ StateTransitionResult InstrumentStateMachine::apply(InstrumentCommand command, c
             if (state_ == InstrumentState::Tracking || state_ == InstrumentState::Degraded)
                 return accept(InstrumentState::Degraded);
             return reject("degraded update cannot complete from " + std::string(instrumentStateName(state_)));
+        case InstrumentCommand::BeginRelock:
+            if (state_ == InstrumentState::Degraded) return accept(InstrumentState::Relocking);
+            return reject("local relock requires degraded tracking");
+        case InstrumentCommand::RelockSucceeded:
+            if (state_ == InstrumentState::Relocking) return accept(InstrumentState::Tracking);
+            return reject("stale local relock completion rejected");
+        case InstrumentCommand::RelockFallback:
+            if (state_ == InstrumentState::Relocking) return accept(InstrumentState::Searching);
+            return reject("stale local relock failure rejected");
         case InstrumentCommand::StopTracking:
             if (state_ == InstrumentState::Searching || state_ == InstrumentState::Tracking ||
                 state_ == InstrumentState::Degraded || state_ == InstrumentState::Relocking)

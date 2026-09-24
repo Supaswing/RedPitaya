@@ -97,9 +97,22 @@ bool FrequencyTracker::configure(const std::vector<ResonanceEstimate>& resonance
         error = "tracking requires one or two baseline resonances";
         return false;
     }
+    std::uint32_t seen_sensor_ids = 0;
     for (const auto& source : resonances) {
-        if (!source.valid || source.spacing_hz <= 0.0 || source.template_points.size() != 5) {
+        if (!source.valid || !std::isfinite(source.frequency_hz) || source.frequency_hz <= 0.0 ||
+            !std::isfinite(source.q) || source.q <= 0.0 || !std::isfinite(source.fwhm_hz) ||
+            source.fwhm_hz <= 0.0 || !std::isfinite(source.spacing_hz) || source.spacing_hz <= 0.0 ||
+            source.template_points.size() != 5 || source.sensor_id < 1 || source.sensor_id > 2 ||
+            (seen_sensor_ids & (1u << source.sensor_id))) {
             error = "tracking requires a valid five-point baseline template";
+            resonances_.clear();
+            return false;
+        }
+        seen_sensor_ids |= 1u << source.sensor_id;
+        if (std::any_of(source.template_points.begin(), source.template_points.end(), [](const auto& point) {
+            return !std::isfinite(point.real) || !std::isfinite(point.imag);
+        })) {
+            error = "tracking template contains non-finite I/Q";
             resonances_.clear();
             return false;
         }
@@ -108,6 +121,7 @@ bool FrequencyTracker::configure(const std::vector<ResonanceEstimate>& resonance
         resonance.baseline_frequency_hz = source.frequency_hz;
         resonance.tracked_frequency_hz = source.frequency_hz;
         resonance.baseline_q = source.q;
+        resonance.baseline_fwhm_hz = source.fwhm_hz;
         resonance.spacing_hz = source.spacing_hz;
         for (std::size_t point = 0; point < 5; ++point)
             resonance.template_iq[point] = Complex(source.template_points[point].real,
@@ -313,4 +327,34 @@ TrackingFrame FrequencyTracker::acquire(std::uint64_t sequence, ComplexMeasureme
     }
     frame.complete = true;
     return frame;
+}
+
+RelockBatchResult FrequencyTracker::relock(std::uint32_t start_hz, std::uint32_t stop_hz,
+                                           ComplexMeasurementSource& source, const CancellationCheck& cancelled,
+                                           const RelockProgress& progress)
+{
+    RelockBatchResult batch;
+    if (!configured()) {
+        batch.reason = "tracker is not configured";
+        return batch;
+    }
+    for (auto& resonance : resonances_) {
+        if (resonance.loss_counter < 3) continue;
+        const auto result = acquireLocalRelock(resonance.sensor_id, resonance.tracked_frequency_hz,
+                                               resonance.baseline_fwhm_hz,
+                                               start_hz, stop_hz, source, cancelled, progress);
+        batch.sensors.push_back(result);
+        if (!result.success) {
+            batch.cancelled = result.cancelled;
+            batch.acquisition_error = result.acquisition_error;
+            batch.reason = result.reason;
+            return batch;
+        }
+        // Preserve the baseline template and spacing; only recenter tracking.
+        resonance.tracked_frequency_hz = result.frequency_hz;
+        resonance.loss_counter = 0;
+    }
+    batch.success = !batch.sensors.empty();
+    if (!batch.success) batch.reason = "no sensor requires local relock";
+    return batch;
 }

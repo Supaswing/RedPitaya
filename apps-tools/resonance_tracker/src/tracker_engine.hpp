@@ -41,11 +41,22 @@ struct TrackingFrame {
     std::vector<TrackingSensorResult> sensors;
 };
 
+struct RelockBatchResult {
+    bool success = false;
+    bool cancelled = false;
+    bool acquisition_error = false;
+    std::vector<LocalRelockResult> sensors;
+    std::string reason;
+};
+
 class FrequencyTracker {
 public:
     bool configure(const std::vector<ResonanceEstimate>& resonances, std::size_t points, std::string& error);
     TrackingFrame acquire(std::uint64_t sequence, ComplexMeasurementSource& source,
                           const CancellationCheck& cancelled = {});
+    RelockBatchResult relock(std::uint32_t start_hz, std::uint32_t stop_hz,
+                             ComplexMeasurementSource& source, const CancellationCheck& cancelled = {},
+                             const RelockProgress& progress = {});
     bool configured() const;
     std::size_t pointCount() const;
 
@@ -57,6 +68,7 @@ private:
         double baseline_frequency_hz = 0.0;
         double tracked_frequency_hz = 0.0;
         double baseline_q = 0.0;
+        double baseline_fwhm_hz = 0.0;
         double spacing_hz = 0.0;
         std::array<Complex, 5> template_iq{};
         std::array<Complex, 5> derivative_iq{};

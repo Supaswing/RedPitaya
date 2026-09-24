@@ -47,6 +47,7 @@ BaselineConfig config(std::size_t sensors)
     value.refine_points = 21;
     value.refine_averages = 3;
     value.sensor_count = sensors;
+    value.sensor_enable_mask = sensors == 2 ? 3 : 1;
     return value;
 }
 
@@ -102,6 +103,20 @@ void multipleCandidates()
     assert(result.resonances[0].frequency_hz < result.resonances[1].frequency_hz);
     assert(std::abs(result.resonances[0].frequency_hz - 31000000.0) < 90000.0);
     assert(std::abs(result.resonances[1].frequency_hz - 33000000.0) < 90000.0);
+}
+
+void secondSensorOnly()
+{
+    auto source = replay({{32150000.0, 130000.0, {-0.60, 0.18}}});
+    auto settings = config(1);
+    settings.sensor_enable_mask = 2;
+    const BaselineResult result = BaselineAnalyzer{}.acquire(22, settings, source);
+    assert(result.valid);
+    assert(result.resonances.size() == 1);
+    assert(result.resonances.front().sensor_id == 2);
+    const DiagnosticResult diagnostics = acquireDiagnostics(23, result.resonances.front(), source);
+    assert(diagnostics.complete);
+    assert(diagnostics.sensor_id == 2);
 }
 
 void missingResonance()
@@ -183,6 +198,7 @@ int main()
 {
     validSingleResonance();
     multipleCandidates();
+    secondSensorOnly();
     missingResonance();
     cancellationDoesNotComplete();
     configurableFilterRadiusAndQBounds();

@@ -50,6 +50,11 @@ transmission channel.
 | BASELINE_READY | start tracking | TRACKING |
 | TRACKING, DEGRADED | good tracking frame | TRACKING |
 | TRACKING, DEGRADED | poor tracking frame | DEGRADED |
+| DEGRADED | three consecutive poor frames for a sensor | RELOCKING |
+| RELOCKING | local model fit accepted | TRACKING |
+| RELOCKING | both local scans rejected or 2 s deadline reached | SEARCHING, then BASELINE_ACQUIRING |
+| BASELINE_ACQUIRING (recovery) | valid baseline and fits complete | BASELINE_READY, then TRACKING |
+| BASELINE_ACQUIRING (recovery) | failed baseline | ERROR |
 | SEARCHING, TRACKING, DEGRADED, RELOCKING | stop tracking | BASELINE_READY |
 | STOPPED, BASELINE_READY, ERROR | start raw I/Q | RAW_IQ |
 | Any state | stop | STOPPED |
@@ -159,6 +164,8 @@ Baseline signals:
   only when its complex-model explained fraction is at least 0.20. Otherwise the
   next candidate is refined, with at most three attempts per requested sensor.
   Thus retries add bounded RF acquisitions only when earlier fits are poor.
+- A coarse hypothesis with zero complex-model support is discarded before
+  ranking. This excludes broad side lobes from an out-of-range narrow feature.
 - For selected inflection-pair candidates, the browser interpolates
   `RT_BASELINE_FILTERED_MAG` at the published left/right frequencies to mark the
   exact selected curvature crossings. Extrema-fallback boundaries are not
@@ -256,8 +263,66 @@ diagnostics acquisition.
 
 ## Scope boundary
 
-This first Milestone 2B slice implements continuous 3/5-point tracking, quality
-estimation, loss counting, and `TRACKING`/`DEGRADED` transitions. It deliberately
-does not yet execute local relock scans: recovery-required remains visible and
-the estimator continues without moving its center on poor frames. Bounded local
-relock and full-baseline fallback remain the next 2B slice.
+Milestone 2B now includes bounded local relock. The first scan takes 11 coherent
+complex points over ±1.5 baseline FWHM around the frozen tracking center; the
+second takes 21 points over ±3 FWHM. Both clip to the baseline frequency
+limits and require at least one FWHM of span. The same complex resonance model
+used for baseline analysis fits each scan with the prior linewidth constrained
+to 0.67–1.50 times its baseline value. Acceptance requires explained residual
+fraction at least 0.20 and a center more than one scan step inside each edge.
+The original five-point template, width, and spacing remain unchanged when a
+local fit is accepted; only the tracked center and loss counter change.
+
+The worker limits local recovery to two attempts, at most 32 windows per lost
+sensor and two seconds total for the batch. The live adapter has a 10 ms
+per-window ready timeout, and cancellation is checked before each point. The
+per-sensor progress fields are `RT_RELOCK_ACTIVE`, `RT_RELOCK_SENSOR_ID`,
+`RT_RELOCK_ATTEMPT`, `RT_RELOCK_PROGRESS`, `RT_RELOCK_FALLBACK`, and
+`RT_RELOCK_REASON`. A failed local fit requests a complete baseline with the
+configuration that produced the tracking template, then starts tracking again
+only after that baseline is valid. A cancelled request never starts fallback.
+An acquisition error enters `ERROR` with its reason. The previous complete
+tracking frame remains sequence coherent while recovery runs.
+
+## Milestone 3 two-resonance contract
+
+The FPGA still supplies one incident/reference I/Q pair. Sensor 1 and sensor 2
+are logical resonances in that response, not separate ADC inputs. The writable
+`RT_SENSOR_ENABLE_MASK` uses bit 0 for sensor 1 and bit 1 for sensor 2. A zero
+mask is allowed as an idle configuration, but baseline start rejects it. The
+legacy `RT_BASELINE_SENSOR_COUNT` remains as a compatibility control; writes of
+1 or 2 map to masks 1 or 3, respectively. The mask is authoritative when both
+controls are present in a message. Enable changes are locked during active
+baseline, diagnostics, and tracking operations. After a mask change, a new
+baseline is needed before diagnostics or tracking; `RT_BASELINE_ACTIVE_MASK`
+identifies the configuration used for the last completed scan. Browser Show
+checkboxes affect rendering only and never write a hardware parameter.
+
+With both resonances enabled, the analyzer assigns IDs by increasing fitted
+frequency. With only sensor 2 enabled, the strongest accepted candidate gets ID
+2. Thus identity can change when the enabled set changes; stable physical
+sensor routing is unavailable in this FPGA contract. A new baseline sequence
+invalidates the old results as before.
+
+Complete baseline publications now include paired arrays
+`RT_BASELINE_RESULT_SENSOR_ID`, `RT_BASELINE_RESULT_FREQUENCY_HZ`,
+`RT_BASELINE_RESULT_Q`, `RT_BASELINE_RESULT_SE_HZ`, and
+`RT_BASELINE_RESULT_MODEL_QUALITY`. They use the existing
+`RT_BASELINE_SIGNAL_SEQUENCE` and `RT_BASELINE_VALID` guard. The older scalar
+resonance fields still report the first result.
+
+One diagnostics command acquires five offsets for each enabled resonance in
+sequence and commits only after all points succeed. `RT_DIAG_SENSOR_COUNT` and
+`RT_DIAG_POINT_SENSOR_ID` extend the existing offset/frequency/complex arrays;
+all entries share `RT_DIAG_SEQUENCE`. The browser validates point counts,
+sensor IDs, offsets, and `RT_DIAG_SIGNAL_SEQUENCE`. During tracking the same
+view can display a complete `RT_TRACK_*` point frame without issuing a
+diagnostics command. The selector and Show checkboxes filter displayed data.
+
+`RT_TRACK_SENSOR_STATE` supplies per-sensor status with 1 = tracking,
+2 = degraded, and 3 = lost/recovery required. The tracking dashboard keeps at
+most 180 complete published frames per sensor. Its frequency mean and sample
+SD, distribution histogram, and normalized-residual trend are browser summaries
+of those received frames; skipped publications are not reconstructed. The
+complex trajectory uses the current complete frame. Hidden dashboards do not
+redraw or append history.
