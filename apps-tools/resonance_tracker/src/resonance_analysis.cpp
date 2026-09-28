@@ -460,6 +460,18 @@ double coarseModelQuality(const std::vector<ComplexMeasurement>& overview, const
         if (point.requested_frequency_hz >= lower && point.requested_frequency_hz <= upper)
             local.push_back(point);
     }
+    // With a sparse overview, a window of +/-6 steps contains only 12 samples
+    // when its center falls between grid points. Expand it to 13 actual samples
+    // before applying the coarse model gate.
+    if (local.size() < 13 && overview.size() >= 13) {
+        const auto nearest = std::lower_bound(overview.begin(), overview.end(), candidate.frequency_hz,
+                                              [](const auto& point, double frequency) {
+            return point.requested_frequency_hz < frequency;
+        });
+        const std::size_t center = static_cast<std::size_t>(nearest - overview.begin());
+        const std::size_t begin = std::min(center > 6 ? center - 6 : 0, overview.size() - 13);
+        local.assign(overview.begin() + begin, overview.begin() + begin + 13);
+    }
     if (local.size() < 13) return 0.0;
     ResonanceEstimate estimate;
     estimate.frequency_hz = candidate.frequency_hz;
@@ -477,6 +489,119 @@ double coarseModelQuality(const std::vector<ComplexMeasurement>& overview, const
 double complexCurvature(const std::vector<Complex>& data, std::size_t index)
 {
     return std::norm(data[index - 1] - 2.0 * data[index] + data[index + 1]);
+}
+
+std::vector<ResonanceCandidate> sparseComplexCandidates(const std::vector<ComplexMeasurement>& overview,
+                                                        double minimum_q, double maximum_q)
+{
+    std::vector<ResonanceCandidate> candidates;
+    if (overview.size() < 13) return candidates;
+    std::vector<Complex> response;
+    response.reserve(overview.size());
+    for (const auto& point : overview) response.emplace_back(point.real, point.imag);
+    std::vector<std::pair<double, std::size_t>> peaks;
+    for (std::size_t index = 2; index + 2 < response.size(); ++index) {
+        const double strength = complexCurvature(response, index);
+        if (strength > kEpsilon && strength >= complexCurvature(response, index - 1) &&
+            strength >= complexCurvature(response, index + 1))
+            peaks.emplace_back(strength, index);
+    }
+    std::sort(peaks.begin(), peaks.end(), [](const auto& left, const auto& right) {
+        return left.first > right.first;
+    });
+    const double step = static_cast<double>(overview.back().requested_frequency_hz -
+                                            overview.front().requested_frequency_hz) / (overview.size() - 1);
+    for (std::size_t peak = 0; peak < std::min(peaks.size(), kMaxCandidates); ++peak) {
+        const std::size_t center = peaks[peak].second;
+        const std::size_t begin = std::min(center > 6 ? center - 6 : 0, overview.size() - 13);
+        const std::vector<ComplexMeasurement> local(overview.begin() + begin, overview.begin() + begin + 13);
+        ResonanceEstimate fit;
+        fit.frequency_hz = overview[center].requested_frequency_hz;
+        fit.fwhm_hz = fit.frequency_hz / (0.5 * (minimum_q + maximum_q));
+        if (!fitComplexModel(local, {}, fit) || !fit.complex_model_valid ||
+            fit.model_explained_fraction < kMinimumRefinedModelQuality ||
+            std::abs(fit.frequency_hz - overview[center].requested_frequency_hz) > 2.0 * step)
+            continue;
+        ResonanceCandidate candidate;
+        candidate.frequency_hz = fit.frequency_hz;
+        candidate.fwhm_hz = fit.fwhm_hz;
+        candidate.left_frequency_hz = fit.frequency_hz - 0.5 * fit.fwhm_hz;
+        candidate.right_frequency_hz = fit.frequency_hz + 0.5 * fit.fwhm_hz;
+        candidate.score = peaks[peak].first;
+        candidate.curvature_area = peaks[peak].first;
+        candidate.selection_quality = fit.model_explained_fraction;
+        if (hasExpectedQ(candidate, minimum_q, maximum_q)) retainCandidate(candidates, candidate);
+    }
+    return candidates;
+}
+
+bool probeSparseCandidates(const std::vector<ComplexMeasurement>& overview, std::size_t limit,
+                           double minimum_q, double maximum_q, ComplexMeasurementSource& source,
+                           bool& first_point, const CancellationCheck& cancelled,
+                           const BaselineProgress& progress, std::vector<ResonanceCandidate>& candidates,
+                           std::string& error)
+{
+    if (overview.size() < 5 || limit == 0) return true;
+    std::vector<Complex> response;
+    response.reserve(overview.size());
+    for (const auto& point : overview) response.emplace_back(point.real, point.imag);
+    std::vector<std::pair<double, std::size_t>> peaks;
+    for (std::size_t index = 2; index + 2 < response.size(); ++index) {
+        const double strength = complexCurvature(response, index);
+        if (strength > kEpsilon && strength >= complexCurvature(response, index - 1) &&
+            strength >= complexCurvature(response, index + 1))
+            peaks.emplace_back(strength, index);
+    }
+    std::sort(peaks.begin(), peaks.end(), [](const auto& left, const auto& right) {
+        return left.first > right.first;
+    });
+    const double coarse_step = static_cast<double>(overview.back().requested_frequency_hz -
+                                                   overview.front().requested_frequency_hz) / (overview.size() - 1);
+    const double minimum_width = std::max(1.0, overview.front().requested_frequency_hz / maximum_q);
+    const double half_span = 1.5 * coarse_step;
+    const std::size_t count = std::clamp(static_cast<std::size_t>(std::ceil(9.0 * coarse_step / minimum_width)) + 1,
+                                         std::size_t{21}, std::size_t{61});
+    const std::size_t attempts = std::min(peaks.size(), limit);
+    for (std::size_t peak = 0; peak < attempts; ++peak) {
+        if (isCancelled(cancelled)) {
+            error = "cancelled";
+            return false;
+        }
+        const auto center = overview[peaks[peak].second].requested_frequency_hz;
+        const double lower = std::max(static_cast<double>(overview.front().requested_frequency_hz), center - half_span);
+        const double upper = std::min(static_cast<double>(overview.back().requested_frequency_hz), center + half_span);
+        std::vector<ComplexMeasurement> local;
+        local.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            if (isCancelled(cancelled)) {
+                error = "cancelled";
+                return false;
+            }
+            ComplexMeasurement point;
+            const auto frequency = roundedFrequency(lower + (upper - lower) * index / (count - 1));
+            if (!source.acquire(frequency, first_point, point, error)) return false;
+            first_point = false;
+            local.push_back(point);
+        }
+        if (progress) progress(BaselineStage::Finding, peak + 1, attempts);
+        ResonanceEstimate fit;
+        fit.frequency_hz = center;
+        fit.fwhm_hz = center / (0.5 * (minimum_q + maximum_q));
+        if (!fitComplexModel(local, {}, fit) || !fit.complex_model_valid ||
+            fit.model_explained_fraction < kMinimumRefinedModelQuality ||
+            std::abs(fit.frequency_hz - center) > coarse_step)
+            continue;
+        ResonanceCandidate candidate;
+        candidate.frequency_hz = fit.frequency_hz;
+        candidate.fwhm_hz = fit.fwhm_hz;
+        candidate.left_frequency_hz = fit.frequency_hz - 0.5 * fit.fwhm_hz;
+        candidate.right_frequency_hz = fit.frequency_hz + 0.5 * fit.fwhm_hz;
+        candidate.score = peaks[peak].first;
+        candidate.curvature_area = peaks[peak].first;
+        candidate.selection_quality = fit.model_explained_fraction;
+        if (hasExpectedQ(candidate, minimum_q, maximum_q)) retainCandidate(candidates, candidate);
+    }
+    return true;
 }
 
 void fitFivePointQuadratic(const std::array<double, 5>& values, double& a, double& b, double& c)
@@ -713,6 +838,12 @@ std::vector<ResonanceCandidate> BaselineAnalyzer::findCandidates(const std::vect
         return candidate.selection_quality <= kEpsilon;
     }), hypotheses.end());
     selectCandidates(hypotheses, wanted, selected);
+    if (selected.size() < wanted) {
+        const auto sparse = sparseComplexCandidates(overview, minimum_q, maximum_q);
+        for (const auto& candidate : sparse) hypotheses.push_back(candidate);
+        selected.clear();
+        selectCandidates(hypotheses, wanted, selected);
+    }
     return selected;
 }
 
@@ -748,9 +879,20 @@ BaselineResult BaselineAnalyzer::acquire(std::uint64_t sequence, const BaselineC
     }
     if (progress) progress(BaselineStage::Finding, 0, config.sensor_count);
     const std::size_t candidate_limit = kCandidateAttemptsPerSensor * config.sensor_count;
-    const auto candidate_pool = findCandidates(result.overview, candidate_limit, config.filter_radius,
-                                               kMinimumCandidateQ, kMaximumCandidateQ,
-                                               &result.smoothed_magnitude_squared, &result.signed_curvature);
+    auto candidate_pool = findCandidates(result.overview, candidate_limit, config.filter_radius,
+                                         kMinimumCandidateQ, kMaximumCandidateQ,
+                                         &result.smoothed_magnitude_squared, &result.signed_curvature);
+    const double minimum_expected_width = static_cast<double>(config.start_frequency_hz) / kMaximumCandidateQ;
+    if (candidate_pool.size() < config.sensor_count || coarse_step > 0.5 * minimum_expected_width) {
+        std::vector<ResonanceCandidate> probed;
+        if (!probeSparseCandidates(result.overview, candidate_limit, kMinimumCandidateQ, kMaximumCandidateQ,
+                                   source, first_point, cancelled, progress, probed, result.error))
+            return result;
+        candidate_pool.insert(candidate_pool.end(), probed.begin(), probed.end());
+        std::vector<ResonanceCandidate> selected;
+        selectCandidates(candidate_pool, candidate_limit, selected);
+        candidate_pool = std::move(selected);
+    }
     if (candidate_pool.size() < config.sensor_count) {
         result.complete = true;
         result.error = "required coarse resonance candidates not found";

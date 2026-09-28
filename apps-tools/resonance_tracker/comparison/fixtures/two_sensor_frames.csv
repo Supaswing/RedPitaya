@@ -1,0 +1,7 @@
+frame_timestamp_s,sequence,sensor_id,frequency_hz,internal_se_hz,normalized_residual,template_gain,tracker_points,frame_complete
+0.0,1,1,21680000,100,0.1,1.0,5,true
+0.0,1,2,24680000,150,0.1,1.0,5,true
+0.1,2,1,21680100,100,0.1,1.0,5,true
+0.1,2,2,24680100,150,0.1,1.0,5,true
+0.2,3,1,21679900,100,0.1,1.0,5,true
+0.2,3,2,24679900,150,0.1,1.0,5,true

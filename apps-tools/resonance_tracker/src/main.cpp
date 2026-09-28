@@ -379,7 +379,7 @@ void set_baseline_progress(BaselineStage stage, std::size_t completed, std::size
     if (stage == BaselineStage::Overview)
         progress = total == 0 ? 0.0 : 70.0 * completed / total;
     else if (stage == BaselineStage::Finding)
-        progress = 72.0;
+        progress = total == 0 ? 70.0 : 70.0 + 2.0 * completed / total;
     else if (stage == BaselineStage::Refining)
         progress = total == 0 ? 72.0 : 72.0 + 20.0 * completed / total;
     else

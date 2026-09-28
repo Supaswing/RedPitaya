@@ -105,6 +105,63 @@ void multipleCandidates()
     assert(std::abs(result.resonances[1].frequency_hz - 33000000.0) < 90000.0);
 }
 
+void sparseTwoResonanceOverview()
+{
+    SyntheticSource source({{21680000.0, 100000.0, {-0.52, 0.15}},
+                            {24687000.0, 140000.0, {-0.68, -0.12}}});
+    auto settings = config(2);
+    settings.start_frequency_hz = 20000000;
+    settings.stop_frequency_hz = 26000000;
+    settings.overview_points = 51;
+    settings.filter_radius = 2;
+    settings.coarse_averages = 1;
+    settings.refine_points = 15;
+    settings.refine_averages = 1;
+    const BaselineResult result = BaselineAnalyzer{}.acquire(24, settings, source);
+    assert(result.complete);
+    assert(result.valid);
+    assert(result.resonances.size() == 2);
+    assert(std::abs(result.resonances[0].frequency_hz - 21680000.0) < 100000.0);
+    assert(std::abs(result.resonances[1].frequency_hz - 24687000.0) < 100000.0);
+}
+
+void sparseFlatOverviewIsRejected()
+{
+    SyntheticSource source({});
+    auto settings = config(1);
+    settings.start_frequency_hz = 20000000;
+    settings.stop_frequency_hz = 26000000;
+    settings.overview_points = 51;
+    settings.filter_radius = 2;
+    settings.coarse_averages = 1;
+    settings.refine_points = 15;
+    settings.refine_averages = 1;
+    const BaselineResult result = BaselineAnalyzer{}.acquire(25, settings, source);
+    assert(result.complete);
+    assert(!result.valid);
+    assert(result.resonances.empty());
+}
+
+void verySparseOverviewUsesLocalProbes()
+{
+    SyntheticSource source({{21680000.0, 100000.0, {-0.52, 0.15}},
+                            {24687000.0, 140000.0, {-0.68, -0.12}}});
+    auto settings = config(2);
+    settings.start_frequency_hz = 20000000;
+    settings.stop_frequency_hz = 26000000;
+    settings.overview_points = 21; // 300 kHz coarse steps, wider than either FWHM.
+    settings.filter_radius = 2;
+    settings.coarse_averages = 1;
+    settings.refine_points = 15;
+    settings.refine_averages = 1;
+    const BaselineResult result = BaselineAnalyzer{}.acquire(26, settings, source);
+    assert(result.complete);
+    assert(result.valid);
+    assert(result.resonances.size() == 2);
+    assert(std::abs(result.resonances[0].frequency_hz - 21680000.0) < 100000.0);
+    assert(std::abs(result.resonances[1].frequency_hz - 24687000.0) < 100000.0);
+}
+
 void secondSensorOnly()
 {
     auto source = replay({{32150000.0, 130000.0, {-0.60, 0.18}}});
@@ -198,6 +255,9 @@ int main()
 {
     validSingleResonance();
     multipleCandidates();
+    sparseTwoResonanceOverview();
+    sparseFlatOverviewIsRejected();
+    verySparseOverviewUsesLocalProbes();
     secondSensorOnly();
     missingResonance();
     cancellationDoesNotComplete();

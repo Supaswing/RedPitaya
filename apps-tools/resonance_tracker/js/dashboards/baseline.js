@@ -291,7 +291,15 @@
         const measurementWindows = Number(byId('baseline-overview-points').value) *
             Number(byId('baseline-coarse-averages').value) + Number(tracker.parameter('RT_BASELINE_SENSOR_COUNT', 1)) *
             (Number(byId('baseline-refine-points').value) * Number(byId('baseline-refine-averages').value) + 5);
-        byId('baseline-measurements').textContent = measurementWindows.toFixed(0);
+        const overviewPoints = Number(byId('baseline-overview-points').value);
+        const coarseStep = (Number(byId('baseline-stop').value) - Number(byId('baseline-start').value)) /
+            Math.max(1, overviewPoints - 1);
+        const minimumWidth = Number(byId('baseline-start').value) / 150;
+        const probePoints = minimumWidth > 0 ?
+            Math.max(21, Math.min(61, Math.ceil(9 * coarseStep / minimumWidth) + 1)) : 61;
+        const maximumProbeWindows = 3 * Number(tracker.parameter('RT_BASELINE_SENSOR_COUNT', 1)) * probePoints;
+        byId('baseline-measurements').textContent = measurementWindows.toFixed(0) +
+            ' (up to ' + (measurementWindows + maximumProbeWindows).toFixed(0) + ' with local probes)';
         format('resonance-frequency', 'RT_RESONANCE_FREQUENCY_HZ', 1, valid);
         format('resonance-q', 'RT_RESONANCE_Q', 3, valid);
         format('resonance-fwhm', 'RT_RESONANCE_FWHM_HZ', 1, valid);

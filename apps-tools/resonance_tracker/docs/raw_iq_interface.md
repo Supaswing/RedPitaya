@@ -22,7 +22,7 @@ The VNA register block is mapped at physical address `0x40700000` with a
 | `0x04` | PHASE_INC | R/W | 32-bit DDS phase increment |
 | `0x08` | PHASE_OFFSET | R/W | phase offset, default `0` |
 | `0x0c` | PERIOD_COUNT | R | completed DDS periods in the latest integration window |
-| `0x10` | AMPLITUDE | R/W | generator amplitude, default `0x0800` |
+| `0x10` | AMPLITUDE | R/W | generator amplitude, default `0x0800`; user reports this setting as 800 mV peak into 50 ohms (RF output not independently measured here) |
 | `0x14` | VNA_CONTROL | W | `0x01` starts one I/Q window |
 | `0x18` | WINDOW_SHIFT | R/W | integration length exponent, default `17` |
 | `0x1c` | I_INC | R | signed 32-bit incident I result |

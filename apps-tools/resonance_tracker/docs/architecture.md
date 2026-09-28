@@ -91,7 +91,9 @@ Default baseline timing is 303 coherent windows for the overview, followed by
 63 windows and five template windows per requested resonance. With one sensor
 that is 371 windows plus DDS settling and software overhead. The actual duration
 depends on `WINDOW_SHIFT`. Progress is weighted 70% overview, 2% candidate
-finding, 20% refinement, and 8% template acquisition.
+finding, 20% refinement, and 8% template acquisition. A sparse overview can add
+up to three local probes per requested resonance. Each probe has 21-61 windows,
+chosen from the coarse step and the narrowest expected Q=150 width.
 
 ## Parameter contract
 
@@ -158,8 +160,11 @@ Baseline signals:
   a side lobe from claiming a nearby resonance that merely falls inside its wider
   refinement window. Among model-supported hypotheses, balanced area remains the
   primary ordering metric. The legacy curvature/prominence score is the final
-  tie-breaker. The coarse calculation uses only the already acquired overview
-  points.
+  tie-breaker. When the overview is too sparse or finds too few candidates,
+  bounded local probes are centered on the strongest complex-I/Q curvature
+  peaks. Their fitted centers must remain within one coarse step of the peak,
+  pass the Q range, and explain at least 0.20 of local complex residual energy.
+  Probe data stays internal until a complete baseline passes refinement.
 - Dense refinement tries candidates in ranked order. A candidate is accepted
   only when its complex-model explained fraction is at least 0.20. Otherwise the
   next candidate is refined, with at most three attempts per requested sensor.

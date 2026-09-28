@@ -1,0 +1,15 @@
+{
+  "port": "COM11",
+  "baud": 38400,
+  "requested_tracking_bandwidth_hz": 100,
+  "baseline_start_hz": 20000000,
+  "baseline_stop_hz": 26000000,
+  "sensor_count": 2,
+  "sensor_1_distance_cm": 6,
+  "sensor_2_distance_cm": 7,
+  "minimum_seconds_per_mode": 15.0,
+  "minimum_rtd_frames_per_mode": 20,
+  "physical_state": "unchanged",
+  "display_state": "record separately",
+  "calibration_state": "record separately"
+}
