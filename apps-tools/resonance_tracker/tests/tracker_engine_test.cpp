@@ -44,6 +44,18 @@ public:
     }
 };
 
+class AlternatingSource final : public ComplexMeasurementSource {
+public:
+    std::size_t count = 0;
+    bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
+    {
+        const Complex value = response(frequency_hz, 32000000.0, 120000.0);
+        const double perturbation = (++count % 2 == 0) ? -0.01 : 0.01;
+        measurement = {frequency_hz, frequency_hz, value.real() + perturbation, value.imag()};
+        return true;
+    }
+};
+
 class ExpandedSource final : public ComplexMeasurementSource {
 public:
     bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
@@ -100,6 +112,21 @@ void tracksSmallShift(std::size_t points)
     assert(frame.sensors[0].requested_shift_hz > 0.0);
     assert(frame.sensors[0].frequency_hz > 32000000.0);
     assert(frame.sensors[0].normalized_residual < 0.10);
+}
+
+void averagesComplexTrackingPoints()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, 5, error));
+    AlternatingSource source;
+    const TrackingFrame frame = tracker.acquire(1, source, {}, 2);
+    assert(frame.complete && frame.points.size() == 5 && source.count == 10);
+    for (const auto& point : frame.points) {
+        const Complex expected = response(point.measurement.effective_frequency_hz, 32000000.0, 120000.0);
+        assert(std::abs(point.measurement.real - expected.real()) < 1e-12);
+        assert(std::abs(point.measurement.imag - expected.imag()) < 1e-12);
+    }
 }
 
 void qualityCounter()
@@ -259,6 +286,7 @@ int main()
 {
     tracksSmallShift(3);
     tracksSmallShift(5);
+    averagesComplexTrackingPoints();
     qualityCounter();
     rejectsInvalidConfigurationAndMetrics();
     poorFramesDoNotMoveCenter(3);

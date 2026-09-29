@@ -266,12 +266,12 @@ double FrequencyTracker::calculateLiveQ(const PreparedResonance& resonance, cons
 }
 
 TrackingFrame FrequencyTracker::acquire(std::uint64_t sequence, ComplexMeasurementSource& source,
-                                        const CancellationCheck& cancelled)
+                                        const CancellationCheck& cancelled, std::size_t averages)
 {
     TrackingFrame frame;
     frame.sequence = sequence;
     frame.points_per_sensor = points_;
-    if (!configured() || resonances_.empty()) {
+    if (!configured() || resonances_.empty() || averages == 0) {
         frame.error = "tracker is not configured";
         return frame;
     }
@@ -288,8 +288,29 @@ TrackingFrame FrequencyTracker::acquire(std::uint64_t sequence, ComplexMeasureme
             const std::uint32_t frequency = static_cast<std::uint32_t>(
                 std::max(1.0, std::floor(resonance.tracked_frequency_hz + offset * resonance.spacing_hz + 0.5)));
             ComplexMeasurement measurement;
-            if (!source.acquire(frequency, first_measurement, measurement, frame.error)) return frame;
-            first_measurement = false;
+            double real_sum = 0.0;
+            double imag_sum = 0.0;
+            std::uint32_t effective_hz = 0;
+            for (std::size_t repeat = 0; repeat < averages; ++repeat) {
+                if (cancelled && cancelled()) {
+                    frame.error = "cancelled";
+                    return frame;
+                }
+                ComplexMeasurement point;
+                if (!source.acquire(frequency, first_measurement, point, frame.error)) return frame;
+                first_measurement = false;
+                if (repeat > 0 && point.effective_frequency_hz != effective_hz) {
+                    frame.error = "tracking averages have mismatched effective frequency";
+                    return frame;
+                }
+                effective_hz = point.effective_frequency_hz;
+                real_sum += point.real;
+                imag_sum += point.imag;
+            }
+            measurement.requested_frequency_hz = frequency;
+            measurement.effective_frequency_hz = effective_hz;
+            measurement.real = real_sum / static_cast<double>(averages);
+            measurement.imag = imag_sum / static_cast<double>(averages);
             const std::size_t point = static_cast<std::size_t>(offset + 2);
             live[point] = Complex(measurement.real, measurement.imag);
             frame.points.push_back({resonance.sensor_id, offset, measurement});

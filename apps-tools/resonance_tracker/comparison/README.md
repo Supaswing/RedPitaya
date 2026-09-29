@@ -1,5 +1,19 @@
 # NanoVNA / Red Pitaya comparison data
 
+The current review document is [comparison_report_2026-09-29.md](comparison_report_2026-09-29.md).
+It uses the saved two-sensor captures, machine-readable comparison and
+frequency-noise ratio CSVs, plus complex amplitude/phase statistics. The
+report shows four figures. `report_draft.md` is the earlier working note.
+The report and `build_comparison.py` use only the NanoVNA capture in
+`output/setupA_nanovna_20260928_123520/`; later NanoVNA captures remain
+preserved but are excluded from all reported calculations and figures.
+
+For the next hardware connection, use [next_connection_matrix.md](next_connection_matrix.md).
+It gives the NanoVNA 192k/384k firmware blocks, 16k/32k IF and
+100/1000/4000 Hz bandwidth matrix, plus the Red Pitaya shift/average matrix.
+The scripts are `capture_nanovna_matrix.py`, `analyze_nanovna_matrix.py`, and
+`run_rp_matrix.ps1`.
+
 This directory follows `AGENTS_comparison_testing.md`. The intended
 matched setup is the user-specified small antenna, Cser TBM, with sensor 1 at
 6 cm and sensor 2 at 7 cm. `setup_A_metadata.csv` records known fields and
@@ -13,7 +27,10 @@ The user states the Red Pitaya's default source amplitude is 800 mV peak into
 the RF output voltage has not been independently measured. If the stated
 800 mV peak is the voltage across 50 ohms for a sinusoid, it corresponds to
 0.566 V RMS, 6.4 mW, or about +8.06 dBm. Do not use that conditional conversion
-as a measured output power.
+as a measured output power. The user reports NanoVNA DDS output of 8 mA into
+50 ohms, corresponding to 400 mV RMS at the source and 200 mV RMS at the
+antenna. The source amplitudes and the NanoVNA display state were not matched
+or verified in the saved captures.
 
 ## Existing source data
 

@@ -5,7 +5,8 @@ param(
     [switch]$IncludeThreePoint,
     [ValidateRange(0, 20)][int]$WindowShift = 17,
     [ValidateRange(1, 32)][int]$CoarseAverages = 3,
-    [ValidateRange(1, 32)][int]$RefineAverages = 3
+    [ValidateRange(1, 32)][int]$RefineAverages = 3,
+    [ValidateRange(1, 8)][int]$TrackingAverages = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,6 +72,7 @@ try {
         RT_BASELINE_REFINE_POINTS = @{ value = 21 }
         RT_BASELINE_REFINE_AVERAGES = @{ value = $RefineAverages }
         RT_TRACK_POINTS = @{ value = 5 }
+        RT_TRACK_AVERAGES = @{ value = $TrackingAverages }
         RT_COMMAND = @{ value = 1 }
         RT_COMMAND_SEQUENCE = @{ value = $sequence }
     }
@@ -101,10 +103,15 @@ try {
     }
     $writer.Flush()
     if (-not $finished) { throw 'Baseline did not complete within 120 seconds; inspect live state before retry.' }
+    if (-not $latest.ContainsKey('RT_TRACK_AVERAGES') -or
+        [int]$latest.RT_TRACK_AVERAGES -ne $TrackingAverages) {
+        throw "RT_TRACK_AVERAGES readback mismatch; requested $TrackingAverages, received $($latest.RT_TRACK_AVERAGES). Deploy the updated app before this matrix."
+    }
     $result = [pscustomobject]@{
         capture = $OutputPath; elapsed_s = $clock.Elapsed.TotalSeconds
         window_shift = $WindowShift; coarse_averages = $CoarseAverages
-        refine_averages = $RefineAverages; overview_points = 151
+        refine_averages = $RefineAverages; tracking_averages = $TrackingAverages
+        overview_points = 151
         command_ack = $latest.RT_COMMAND_ACK; state = $latest.RT_STATE
         baseline_sequence = $latest.RT_BASELINE_SEQUENCE
         baseline_complete = $latest.RT_BASELINE_COMPLETE

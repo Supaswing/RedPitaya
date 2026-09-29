@@ -53,7 +53,7 @@ class FrequencyTracker {
 public:
     bool configure(const std::vector<ResonanceEstimate>& resonances, std::size_t points, std::string& error);
     TrackingFrame acquire(std::uint64_t sequence, ComplexMeasurementSource& source,
-                          const CancellationCheck& cancelled = {});
+                          const CancellationCheck& cancelled = {}, std::size_t averages = 1);
     RelockBatchResult relock(std::uint32_t start_hz, std::uint32_t stop_hz,
                              ComplexMeasurementSource& source, const CancellationCheck& cancelled = {},
                              const RelockProgress& progress = {});

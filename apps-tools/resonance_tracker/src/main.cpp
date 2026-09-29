@@ -70,6 +70,7 @@ CIntParameter rt_baseline_coarse_averages("RT_BASELINE_COARSE_AVERAGES", CBasePa
 CIntParameter rt_baseline_refine_points("RT_BASELINE_REFINE_POINTS", CBaseParameter::RW, 21, 0, 5, 101);
 CIntParameter rt_baseline_refine_averages("RT_BASELINE_REFINE_AVERAGES", CBaseParameter::RW, 3, 0, 1, 32);
 CIntParameter rt_tracking_points("RT_TRACK_POINTS", CBaseParameter::RW, 5, 0, 3, 5);
+CIntParameter rt_tracking_averages("RT_TRACK_AVERAGES", CBaseParameter::RW, 1, 0, 1, 8);
 CIntParameter rt_state("RT_STATE", CBaseParameter::RO, kStopped, 0, kStopped, kError);
 CStringParameter rt_error("RT_ERROR", CBaseParameter::RO, "", 0);
 CIntParameter rt_sequence("RT_SEQUENCE", CBaseParameter::RO, 0, 0, 0, 2147483647);
@@ -332,6 +333,7 @@ std::atomic<int> baseline_coarse_averages{3};
 std::atomic<int> baseline_refine_points{21};
 std::atomic<int> baseline_refine_averages{3};
 std::atomic<int> tracking_points{5};
+std::atomic<int> tracking_averages{1};
 std::mutex operation_mutex;
 RequestedOperation requested_operation = RequestedOperation::Idle;
 std::uint64_t operation_generation = 0;
@@ -637,6 +639,7 @@ void acquisition_loop()
     std::uint64_t diagnostic_sequence = 0;
     std::uint64_t tracking_sequence = 0;
     bool tracking_active = false;
+    int active_tracking_averages = 1;
     bool resume_tracking_after_baseline = false;
     bool was_running = false;
     bool first_point = true;
@@ -900,6 +903,7 @@ void acquisition_loop()
                 continue;
             }
             if (!tracking_active) {
+                active_tracking_averages = tracking_averages.load();
                 if (!apply_window_shift(requested_window_shift.load(), applied_window_shift)) {
                     complete_operation(operation, generation);
                     set_activity(false, false);
@@ -932,7 +936,7 @@ void acquisition_loop()
             const TrackingFrame frame = frequency_tracker.acquire(
                 ++tracking_sequence, measurement_source, [&]() {
                     return exit_requested.load() || !operation_is_current(RequestedOperation::Tracking, generation);
-                });
+                }, static_cast<std::size_t>(active_tracking_averages));
             if (!operation_is_current(RequestedOperation::Tracking, generation)) continue;
             if (!frame.complete) {
                 complete_operation(RequestedOperation::Tracking, generation);
@@ -1193,6 +1197,7 @@ extern "C" int rp_app_init(void)
     baseline_refine_points.store(21);
     baseline_refine_averages.store(3);
     tracking_points.store(5);
+    tracking_averages.store(1);
     {
         std::lock_guard<std::mutex> lock(operation_mutex);
         requested_operation = RequestedOperation::Idle;
@@ -1245,6 +1250,7 @@ void UpdateParams(void)
     rt_baseline_refine_points.SendValue(baseline_refine_points.load());
     rt_baseline_refine_averages.SendValue(baseline_refine_averages.load());
     rt_tracking_points.SendValue(tracking_points.load());
+    rt_tracking_averages.SendValue(tracking_averages.load());
     rt_state.SendValue(snapshot.state);
     rt_error.SendValue(snapshot.error);
     rt_sequence.SendValue(snapshot.sequence);
@@ -1463,6 +1469,10 @@ void OnNewParams(void)
         rt_tracking_points.Update();
         const int points = rt_tracking_points.Value();
         if (points == 3 || points == 5) tracking_points.store(points);
+    }
+    if (rt_tracking_averages.IsNewValue()) {
+        rt_tracking_averages.Update();
+        if (!measurement_active) tracking_averages.store(rt_tracking_averages.Value());
     }
     if (rt_command.IsNewValue()) rt_command.Update();
     if (rt_command_sequence.IsNewValue()) {

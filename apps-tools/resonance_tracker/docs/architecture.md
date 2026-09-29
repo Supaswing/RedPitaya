@@ -123,6 +123,11 @@ Commands:
   quadratic Savitzky-Golay window; a run requires at least `2r+5` overview
   points.
 - `RT_TRACK_POINTS` accepts only 3 or 5. It is fixed while tracking is active.
+- `RT_TRACK_AVERAGES` accepts 1–8 and is latched when tracking starts. It
+  coherently averages repeated normalized complex measurements at each tracking
+  frequency before fitting. It does not change baseline averaging or raw-IQ
+  integration length; `RT_WINDOW_SHIFT` still controls each individual FPGA
+  acquisition. This parameter is used by the comparison capture scripts.
 
 Baseline/result scalars:
 
