@@ -71,6 +71,14 @@ inside the existing raw-IQ path and its adapter.
 
 ## Golden-data gaps
 
+The 2026-10-05 fast recovery stage is an independently implemented experimental
+extension in `fast_relock.*`, integrated by `FrequencyTracker::tryFastRelock`.
+It precedes the ported local scans and preserves them as fallback. Its six-point
+linear shift/gain/offset estimator has a fixed-size hardware-independent API;
+no NanoVNA or FPGA source was copied for this extension. See
+[tracking and relocking calculations](tracking_and_relocking.md) for bounds,
+confirmation, tests, and the unresolved captured-data validation.
+
 Current replay tests generate deterministic complex traces and cover a
 valid resonance, two candidates, no acceptable resonance, cancellation, and an
 RTM-like five-point frame. The tracking tests also exercise 3/5-point shifted

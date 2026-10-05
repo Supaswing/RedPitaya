@@ -319,9 +319,10 @@
         byId('tracking-recovery').hidden = !recovery;
         if (recovery) {
             const activeRelock = Boolean(tracker.parameter('RT_RELOCK_ACTIVE', false));
+            const attempt = tracker.parameter('RT_RELOCK_ATTEMPT', '-');
             byId('tracking-recovery').textContent = activeRelock ?
                 'Local re-lock: sensor ' + tracker.parameter('RT_RELOCK_SENSOR_ID', '-') +
-                ', attempt ' + tracker.parameter('RT_RELOCK_ATTEMPT', '-') +
+                (Number(attempt) === 0 ? ', fast recovery' : ', scan attempt ' + attempt) +
                 ', ' + Number(tracker.parameter('RT_RELOCK_PROGRESS', 0)).toFixed(1) + '% of scan budget.' :
                 String(tracker.parameter('RT_RELOCK_REASON', '') || 'Recovery is starting.');
         }

@@ -69,10 +69,11 @@ public:
 class DualSource final : public ComplexMeasurementSource {
 public:
     bool lose_first = true;
+    double first_center_hz = 32200000;
     bool acquire(std::uint32_t frequency_hz, bool, ComplexMeasurement& measurement, std::string&) override
     {
         const Complex value = frequency_hz < 32500000 ?
-            (lose_first ? Complex{} : response(frequency_hz, 32200000.0, 120000.0)) :
+            (lose_first ? Complex{} : response(frequency_hz, first_center_hz, 120000.0)) :
             response(frequency_hz, 33000000.0, 120000.0);
         measurement = {frequency_hz, frequency_hz, value.real(), value.imag()};
         return true;
@@ -280,6 +281,150 @@ void relockOnlyLostSensor()
     assert(relock.success && relock.sensors.size() == 1);
     assert(relock.sensors[0].sensor_id == 1);
 }
+
+ResonanceEstimate recoveryBaseline()
+{
+    auto baseline = baselineEstimate();
+    for (int offset = -24; offset <= 24; ++offset) {
+        const auto frequency = static_cast<std::uint32_t>(baseline.frequency_hz + offset * 10000.0);
+        const auto value = response(frequency, baseline.frequency_hz, 120000.0);
+        baseline.refinement.push_back({frequency, frequency, value.real(), value.imag()});
+    }
+    return baseline;
+}
+
+void fastRecoverySucceeds(std::size_t points, double shift)
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({recoveryBaseline()}, points, error));
+    loseTracking(tracker);
+    ShiftedSource source(32000000.0 + shift);
+    const auto result = tracker.relock(30000000, 34000000, source);
+    assert(result.success && result.sensors[0].fast_recovery);
+    assert(result.sensors[0].attempts == 0);
+    assert(result.sensors[0].measured_points == 6 + points);
+    assert(std::abs(result.sensors[0].frequency_hz - (32000000.0 + shift)) < 5000);
+    const auto next = tracker.acquire(4, source);
+    assert(next.complete && !next.degraded && next.sensors[0].loss_counter == 0);
+}
+
+void fastRecoveryFallsBackAndCancels()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({recoveryBaseline()}, 5, error));
+    loseTracking(tracker);
+    ShiftedSource shifted(32200000);
+    auto result = tracker.relock(30000000, 34000000, shifted);
+    assert(result.success && !result.sensors[0].fast_recovery);
+    assert(result.sensors[0].measured_points >= 17);
+
+    assert(tracker.configure({recoveryBaseline()}, 5, error));
+    loseTracking(tracker);
+    FlatSource flat;
+    result = tracker.relock(30000000, 34000000, flat);
+    assert(!result.success && flat.count == 38); // Six probes and unchanged 11/21-point fallback.
+    assert(result.sensors[0].measured_points == 38);
+    const auto after = tracker.acquire(4, flat);
+    assert(after.sensors[0].frequency_hz == 32000000); // No rejected candidate was committed.
+
+    flat.count = 0;
+    result = tracker.relock(30000000, 34000000, flat, [&]() { return flat.count >= 4; });
+    assert(result.cancelled && flat.count == 4);
+
+    assert(tracker.configure({recoveryBaseline()}, 5, error));
+    loseTracking(tracker);
+    result = tracker.relock(31900000, 32100000, flat); // Six probes cannot fit in these bounds.
+    assert(!result.success && result.sensors[0].measured_points == 0);
+}
+
+class InterruptedRecoverySource final : public ComplexMeasurementSource {
+public:
+    std::size_t count = 0;
+    std::size_t fail_at = 0;
+    bool invalidate_confirmation = false;
+    bool acquire(std::uint32_t frequency, bool, ComplexMeasurement& measurement, std::string& error) override
+    {
+        ++count;
+        if (count == fail_at) { error = "injected acquisition failure"; return false; }
+        const auto value = invalidate_confirmation && count > 6 ? Complex{} : response(frequency, 32030000, 120000);
+        measurement = {frequency, frequency, value.real(), value.imag()};
+        return true;
+    }
+};
+
+void confirmationFailureIsSafe()
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({recoveryBaseline()}, 5, error));
+    loseTracking(tracker);
+    InterruptedRecoverySource source;
+    source.invalidate_confirmation = true;
+    const auto result = tracker.relock(30000000, 34000000, source);
+    assert(!result.success && !result.cancelled && !result.acquisition_error);
+    assert(source.count == 43 && result.sensors[0].measured_points == 43);
+    FlatSource flat;
+    assert(tracker.acquire(4, flat).sensors[0].frequency_hz == 32000000);
+}
+
+void fastRecoveryErrorsAndConfirmationCancellation()
+{
+    for (std::size_t failed_point : {3U, 8U}) {
+        FrequencyTracker tracker;
+        std::string error;
+        assert(tracker.configure({recoveryBaseline()}, 5, error));
+        loseTracking(tracker);
+        InterruptedRecoverySource source;
+        source.fail_at = failed_point;
+        const auto result = tracker.relock(30000000, 34000000, source);
+        assert(!result.success && result.acquisition_error && !result.cancelled);
+        assert(source.count == failed_point);
+        assert(result.reason == "injected acquisition failure");
+        FlatSource flat;
+        assert(tracker.acquire(4, flat).sensors[0].frequency_hz == 32000000);
+    }
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({recoveryBaseline()}, 5, error));
+    loseTracking(tracker);
+    InterruptedRecoverySource source;
+    const auto result = tracker.relock(30000000, 34000000, source, [&]() { return source.count >= 8; });
+    assert(result.cancelled && !result.success && source.count == 8);
+    FlatSource flat;
+    assert(tracker.acquire(4, flat).sensors[0].frequency_hz == 32000000);
+}
+
+void fastRecoveryKeepsHealthySensor()
+{
+    auto second = recoveryBaseline();
+    second.sensor_id = 2;
+    second.frequency_hz += 1000000;
+    second.q = second.frequency_hz / second.fwhm_hz;
+    for (auto& point : second.template_points) {
+        point.requested_frequency_hz += 1000000;
+        point.effective_frequency_hz += 1000000;
+    }
+    for (auto& point : second.refinement) {
+        point.requested_frequency_hz += 1000000;
+        point.effective_frequency_hz += 1000000;
+    }
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({recoveryBaseline(), second}, 5, error));
+    DualSource source;
+    for (std::uint64_t sequence = 1; sequence <= 3; ++sequence)
+        assert(tracker.acquire(sequence, source).complete);
+    source.lose_first = false;
+    source.first_center_hz = 32030000;
+    const auto result = tracker.relock(30000000, 34000000, source);
+    assert(result.success && result.sensors.size() == 1 && result.sensors[0].fast_recovery);
+    assert(result.sensors[0].sensor_id == 1);
+    const auto next = tracker.acquire(4, source);
+    assert(next.complete && !next.degraded);
+    assert(std::abs(next.sensors[1].frequency_hz - 33000000) < 1e-6);
+}
 }
 
 int main()
@@ -296,5 +441,11 @@ int main()
     failedRelockIsBounded();
     cancelledRelockStopsEarly();
     relockOnlyLostSensor();
+    fastRecoverySucceeds(3, -30000);
+    fastRecoverySucceeds(5, 30000);
+    fastRecoveryFallsBackAndCancels();
+    confirmationFailureIsSafe();
+    fastRecoveryErrorsAndConfirmationCancellation();
+    fastRecoveryKeepsHealthySensor();
     return 0;
 }

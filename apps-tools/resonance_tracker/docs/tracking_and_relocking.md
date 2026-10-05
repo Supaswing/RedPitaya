@@ -162,6 +162,80 @@ offset range, `y_edge <= y_min`, or `h < 0.1`. This local quadratic width estima
 is distinct from baseline Lorentzian FWHM. Q is calculated even for poor frames;
 it does not determine the loss decision.
 
+## Fast recovery before local scans
+
+Since 2026-10-05, recovery first tries the six offsets
+`{-200, -100, -50, +50, +100, +200}` kHz around the last accepted tracking
+center. It requires a finite, strictly increasing effective-frequency baseline
+refinement scan covering every probe, and every requested probe inside the
+saved baseline limits. Missing coverage skips fast recovery without acquisition;
+the reference is never extrapolated and offsets are never clipped.
+
+The adapter translates each measured effective frequency back to the original
+baseline center. Piecewise-linear interpolation of the dense refinement scan
+supplies reference gamma and its derivative in 1/Hz. This assumes that the
+response translates with the center; it does not refit the baseline model.
+
+[`fast_relock.hpp`](../src/fast_relock.hpp) and
+[`fast_relock.cpp`](../src/fast_relock.cpp) isolate a fixed-size arithmetic kernel:
+six reference values, six derivatives, six measured values, configurable limits,
+and a result. It has no dynamic allocation, hardware calls, time source,
+cancellation, state transitions, or telemetry. Acquisition, interpolation,
+confirmation, and committing a center remain in `FrequencyTracker::tryFastRelock`.
+No FPGA/register contract is changed. A future FPGA port still needs explicit
+fixed-point ranges, accumulator widths, division/square-root design, and
+comparison against this double-precision reference.
+
+For a positive upward resonance displacement `delta`, define
+`e = measured - reference`. The kernel solves the real/complex linear model
+`e = -delta*d + alpha*t + c`, where `alpha` and `c` are complex gain change and
+constant offset. Thus the resonance-shift sign is negative with respect to the
+excitation-frequency derivative.
+
+After subtracting means from `t`, `d`, and `e`, eliminate their complex template
+components:
+
+```text
+E = sum |t|^2
+a_d = sum conj(t)*d / E
+a_e = sum conj(t)*e / E
+d_perp = d - a_d*t
+e_perp = e - a_e*t
+information = sum |d_perp|^2
+delta = -sum Re(conj(d_perp)*e_perp) / information
+alpha = a_e + delta*a_d
+gain = |1 + alpha|
+RSS = sum |e + delta*d - alpha*t|^2
+normalized_residual = RSS / (gain^2 * E + 1e-18)
+SE = sqrt((RSS/7) / information)
+```
+
+Seven residual degrees of freedom remain from twelve real observations minus
+five real parameters. Non-finite inputs/results, template energy below `1e-18`,
+or derivative information below `1e-18` invalidate the solve. Removing the gain
+component also rejects a derivative indistinguishable from a complex gain change.
+
+Initial experimental acceptance limits are `abs(delta) <= 0.25*baseline_FWHM`,
+`SE <= 0.10*baseline_FWHM`, residual `<= 0.10`, and gain `>= 0.25`.
+The limits live outside the arithmetic kernel. These are conservative prototype
+limits, not thresholds validated against captured RF data. The probe span does
+not guarantee a 200 kHz capture range.
+
+An accepted estimate is provisional. Acquire one ordinary 3/5-point frame around
+the proposed center, without averaging, then use the existing tracker fit and
+quality gate to confirm it. Its sampling interval must remain inside baseline
+bounds. Only after complete successful confirmation does recovery commit
+`old_center + delta + confirmation_shift` and clear the loss counter. It does
+not accept a final total displacement outside the same shift bound, or a final
+tracking interval outside the saved baseline range. It does
+not publish this provisional point set as a tracking frame or replace the template.
+
+Probe rejection or failed confirmation continues into the unchanged 11/21-point
+local scans around the original center. Cancellation or acquisition errors do
+not trigger those scans. Fast success is recorded in `LocalRelockResult::fast_recovery`
+and reported through the existing `RT_RELOCK_REASON` text. `RT_RELOCK_ATTEMPT = 0`
+denotes the fast stage; 1 and 2 still denote the original local scans.
+
 ## Local relock scans and model
 
 Only sensors with loss counter 3 are scanned, sequentially. Both attempts use
@@ -211,7 +285,11 @@ baseline width, and baseline Q remain unchanged.
 
 ## Bounds, fallback, and publication
 
-Local relock uses at most 32 acquisitions per lost sensor (64 for two sensors).
+Recovery uses at most 43 acquisitions per lost sensor (86 for two sensors):
+six probes, up to five confirmation points, and the 32-point local fallback.
+Fast success takes nine acquisitions in three-point tracking or eleven in
+five-point tracking. If reference coverage is unavailable, the original
+32-acquisition bound remains.
 The worker supplies one two-second deadline for the whole batch, checked before
 each point and after scan acquisition. This is a cooperative deadline: a
 measurement or model fit already running may finish after it. The live
@@ -230,7 +308,7 @@ baseline for the configured sensor set.
 Only complete tracking frames are published, with one sequence, sensor IDs,
 signed offsets, effective frequencies, complex values, estimates, and quality.
 During recovery the last complete frame remains available. Relock progress is
-reported separately through `RT_RELOCK_*`; attempt progress uses the 32-point
+reported separately through `RT_RELOCK_*`; attempt progress uses the 43-point
 maximum and success sets it to 100%. Dashboard selection does not affect the
 calculations or hardware mode.
 
@@ -243,3 +321,12 @@ cancellation, and recovery of only the lost sensor. See
 [Milestone 2B validation](milestone_2b_validation.md) for prior test results and
 remaining target checks. Captured complex-input numerical golden replays for
 relock remain pending; existing event logs alone cannot validate the equations.
+
+`fast_relock_test` checks both signs, gain/offset elimination, zero and dependent
+derivatives, flat references, non-finite data, gain collapse, shift bounds,
+residual rejection, and uncertainty rejection. Extended `tracker_engine_test`
+checks six-probe recovery for +/-30 kHz, 3/5-point confirmation, fallback for a
+200 kHz shift, missing coverage, flat/missing resonance, failed confirmation,
+probe/confirmation acquisition errors, and cancellation in both stages without
+committing the provisional center, plus keeping the healthy second sensor
+unchanged. These are synthetic replay checks.

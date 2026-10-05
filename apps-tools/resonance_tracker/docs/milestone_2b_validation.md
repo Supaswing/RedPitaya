@@ -1,5 +1,20 @@
 # Milestone 2B completion and review (2026-09-24)
 
+## Fast recovery extension (2026-10-05)
+
+Fast recovery precedes the original local scans when the baseline refinement
+covers +/-200 kHz. Its fixed-size linear estimator is isolated in `fast_relock.*`;
+the tracker owns interpolation and a 3/5-point confirmation before commit.
+See [calculations and bounds](tracking_and_relocking.md).
+Host builds and runs passed for `fast_relock_test`, extended
+`tracker_engine_test`, `resonance_analysis_test`, `instrument_state_test`, and
+`iq_statistics_test` with MSYS2 UCRT GCC. Warning checks passed for new code;
+the existing unused `fitCurvatureFallback` warning remains visible.
+The Red Pitaya ARM SDK is absent from this host, so the target app build,
+browser runtime, RF captures, recovery timing, and raw-IQ hardware regression
+were not verified for this extension. FPGA logic and the raw-IQ adapter are
+unchanged. No FPGA implementation or fixed-point validation is claimed.
+
 ## Recovery behavior
 
 Three consecutive poor tracking frames trigger `RELOCKING`. Each lost logical

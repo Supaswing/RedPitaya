@@ -276,7 +276,14 @@ diagnostics acquisition.
 
 ## Scope boundary
 
-Milestone 2B now includes bounded local relock. The first scan takes 11 coherent
+Local relock first tries the isolated six-probe linear estimator at +/-50,
++/-100, and +/-200 kHz when the saved refinement scan covers those offsets.
+A normal tracking-quality frame confirms a provisional shift before commit.
+Attempt 0 denotes this fast stage; missing coverage or rejection continues to
+the original local scans. See [the estimator contract](tracking_and_relocking.md)
+for equations, experimental limits, and FPGA porting boundaries.
+
+The first fallback scan takes 11 coherent
 complex points over ±1.5 baseline FWHM around the frozen tracking center; the
 second takes 21 points over ±3 FWHM. Both clip to the baseline frequency
 limits and require at least one FWHM of span. The same complex resonance model
@@ -286,7 +293,7 @@ fraction at least 0.20 and a center more than one scan step inside each edge.
 The original five-point template, width, and spacing remain unchanged when a
 local fit is accepted; only the tracked center and loss counter change.
 
-The worker limits local recovery to two attempts, at most 32 windows per lost
+The worker limits the fallback to two attempts, with at most 43 windows per lost
 sensor and two seconds total for the batch. The live adapter has a 10 ms
 per-window ready timeout, and cancellation is checked before each point. The
 per-sensor progress fields are `RT_RELOCK_ACTIVE`, `RT_RELOCK_SENSOR_ID`,

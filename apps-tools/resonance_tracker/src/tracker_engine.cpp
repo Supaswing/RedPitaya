@@ -1,6 +1,7 @@
 #include "tracker_engine.hpp"
 
 #include "tracking_quality.hpp"
+#include "fast_relock.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -123,6 +124,7 @@ bool FrequencyTracker::configure(const std::vector<ResonanceEstimate>& resonance
         resonance.baseline_q = source.q;
         resonance.baseline_fwhm_hz = source.fwhm_hz;
         resonance.spacing_hz = source.spacing_hz;
+        resonance.recovery_reference = source.refinement;
         for (std::size_t point = 0; point < 5; ++point)
             resonance.template_iq[point] = Complex(source.template_points[point].real,
                                                    source.template_points[point].imag);
@@ -350,6 +352,107 @@ TrackingFrame FrequencyTracker::acquire(std::uint64_t sequence, ComplexMeasureme
     return frame;
 }
 
+LocalRelockResult FrequencyTracker::tryFastRelock(const PreparedResonance& resonance,
+                                                  std::uint32_t start_hz, std::uint32_t stop_hz,
+                                                  ComplexMeasurementSource& source,
+                                                  const CancellationCheck& cancelled,
+                                                  const RelockProgress& progress)
+{
+    LocalRelockResult result;
+    result.sensor_id = resonance.sensor_id;
+    const auto& reference = resonance.recovery_reference;
+    if (reference.size() < 2 || start_hz >= stop_hz) return result;
+    for (std::size_t j = 0; j < reference.size(); ++j) {
+        if (!std::isfinite(reference[j].real) || !std::isfinite(reference[j].imag) ||
+            (j && reference[j].effective_frequency_hz <= reference[j - 1].effective_frequency_hz)) return result;
+    }
+    FastRelock::Input input{};
+    std::array<std::uint32_t, 6> frequencies{};
+    // Validate all probes before acquiring anything. Never extrapolate the
+    // reference or clip offsets into a different, potentially singular grid.
+    for (std::size_t j = 0; j < frequencies.size(); ++j) {
+        const double frequency = resonance.tracked_frequency_hz + FastRelock::kOffsetsHz[j];
+        if (frequency < start_hz || frequency > stop_hz) return result;
+        frequencies[j] = static_cast<std::uint32_t>(std::floor(frequency + 0.5));
+        const double original_frequency = frequencies[j] - resonance.tracked_frequency_hz +
+                                          resonance.baseline_frequency_hz;
+        if (original_frequency < reference.front().effective_frequency_hz ||
+            original_frequency > reference.back().effective_frequency_hz) return result;
+    }
+    for (std::size_t j = 0; j < frequencies.size(); ++j) {
+        if (cancelled && cancelled()) { result.cancelled = true; return result; }
+        ComplexMeasurement measurement;
+        if (!source.acquire(frequencies[j], j == 0, measurement, result.reason)) {
+            result.acquisition_error = true;
+            return result;
+        }
+        ++result.measured_points;
+        if (progress) progress(resonance.sensor_id, 0, result.measured_points, 6 + points_);
+        // Match the reference to the actual DDS frequency, translated back
+        // to the baseline center. Secants supply the piecewise-linear slope.
+        const double original_frequency = measurement.effective_frequency_hz - resonance.tracked_frequency_hz +
+                                          resonance.baseline_frequency_hz;
+        if (measurement.effective_frequency_hz < start_hz || measurement.effective_frequency_hz > stop_hz ||
+            original_frequency < reference.front().effective_frequency_hz ||
+            original_frequency > reference.back().effective_frequency_hz) return result;
+        std::size_t right = 1;
+        while (right + 1 < reference.size() && reference[right].effective_frequency_hz < original_frequency) ++right;
+        const auto& left = reference[right - 1];
+        const auto& next = reference[right];
+        const double width = static_cast<double>(next.effective_frequency_hz) - left.effective_frequency_hz;
+        const Complex left_value(left.real, left.imag);
+        const Complex derivative = (Complex(next.real, next.imag) - left_value) / width;
+        input.reference[j] = left_value + (original_frequency - left.effective_frequency_hz) * derivative;
+        input.derivative_per_hz[j] = derivative;
+        input.measured[j] = Complex(measurement.real, measurement.imag);
+    }
+    if (cancelled && cancelled()) { result.cancelled = true; return result; }
+    // Experimental capture limits; the normal tracking quality gate still
+    // confirms the candidate before any tracked center is committed.
+    FastRelock::Limits limits;
+    limits.maximum_shift_hz = 0.25 * resonance.baseline_fwhm_hz;
+    limits.maximum_se_hz = 0.10 * resonance.baseline_fwhm_hz;
+    const auto estimate = FastRelock::estimate(input, limits);
+    if (!estimate.accepted) return result;
+    const double candidate = resonance.tracked_frequency_hz + estimate.shift_hz;
+    const int first = points_ == 3 ? -1 : -2;
+    const int last = -first;
+    if (candidate + first * resonance.spacing_hz < start_hz ||
+        candidate + last * resonance.spacing_hz > stop_hz) return result;
+    std::array<Complex, 5> live{};
+    for (int offset = first; offset <= last; ++offset) {
+        if (cancelled && cancelled()) { result.cancelled = true; return result; }
+        ComplexMeasurement measurement;
+        const auto frequency = static_cast<std::uint32_t>(std::floor(candidate + offset * resonance.spacing_hz + 0.5));
+        if (!source.acquire(frequency, offset == first, measurement, result.reason)) {
+            result.acquisition_error = true;
+            return result;
+        }
+        ++result.measured_points;
+        if (measurement.effective_frequency_hz < start_hz || measurement.effective_frequency_hz > stop_hz) return result;
+        live[static_cast<std::size_t>(offset + 2)] = Complex(measurement.real, measurement.imag);
+        if (progress) progress(resonance.sensor_id, 0, result.measured_points, 6 + points_);
+    }
+    if (cancelled && cancelled()) { result.cancelled = true; return result; }
+    TrackingSensorResult confirmation;
+    confirmation.fit_valid = points_ == 5 ? fitFive(resonance, live, confirmation) : fitThree(resonance, live, confirmation);
+    TrackingQualityInput quality;
+    quality.fit_valid = confirmation.fit_valid;
+    quality.spacing_hz = resonance.spacing_hz;
+    quality.requested_shift_hz = confirmation.requested_shift_hz;
+    quality.frequency_se_hz = confirmation.frequency_se_hz;
+    quality.normalized_residual = confirmation.normalized_residual;
+    quality.template_gain = confirmation.template_gain;
+    if (evaluateTrackingQuality(quality).poor_fit) return result;
+    result.frequency_hz = candidate + confirmation.requested_shift_hz;
+    if (std::abs(result.frequency_hz - resonance.tracked_frequency_hz) > limits.maximum_shift_hz ||
+        result.frequency_hz + first * resonance.spacing_hz < start_hz ||
+        result.frequency_hz + last * resonance.spacing_hz > stop_hz) return result;
+    result.success = true;
+    result.fast_recovery = true;
+    return result;
+}
+
 RelockBatchResult FrequencyTracker::relock(std::uint32_t start_hz, std::uint32_t stop_hz,
                                            ComplexMeasurementSource& source, const CancellationCheck& cancelled,
                                            const RelockProgress& progress)
@@ -361,9 +464,14 @@ RelockBatchResult FrequencyTracker::relock(std::uint32_t start_hz, std::uint32_t
     }
     for (auto& resonance : resonances_) {
         if (resonance.loss_counter < 3) continue;
-        const auto result = acquireLocalRelock(resonance.sensor_id, resonance.tracked_frequency_hz,
-                                               resonance.baseline_fwhm_hz,
-                                               start_hz, stop_hz, source, cancelled, progress);
+        auto result = tryFastRelock(resonance, start_hz, stop_hz, source, cancelled, progress);
+        if (!result.success && !result.cancelled && !result.acquisition_error) {
+            const auto fast_points = result.measured_points;
+            result = acquireLocalRelock(resonance.sensor_id, resonance.tracked_frequency_hz,
+                                       resonance.baseline_fwhm_hz,
+                                       start_hz, stop_hz, source, cancelled, progress);
+            result.measured_points += fast_points;
+        }
         batch.sensors.push_back(result);
         if (!result.success) {
             batch.cancelled = result.cancelled;

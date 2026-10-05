@@ -998,7 +998,7 @@ void acquisition_loop()
                         telemetry.relock_sensor_id = static_cast<int>(sensor);
                         telemetry.relock_attempt = static_cast<int>(attempt);
                         telemetry.relock_progress = static_cast<float>(
-                            100.0 * (attempt == 1 ? completed : 11 + completed) / 32.0);
+                            100.0 * (attempt == 0 ? completed : attempt == 1 ? 11 + completed : 22 + completed) / 43.0);
                     });
                 if (!operation_is_current(RequestedOperation::Tracking, generation)) {
                     std::lock_guard<std::mutex> lock(telemetry_mutex);
@@ -1016,7 +1016,9 @@ void acquisition_loop()
                     std::lock_guard<std::mutex> lock(telemetry_mutex);
                     telemetry.relock_active = false;
                     telemetry.relock_progress = 100.0f;
-                    telemetry.relock_reason = "local relock succeeded";
+                    const bool used_fast = std::any_of(relock.sensors.begin(), relock.sensors.end(),
+                        [](const auto& sensor) { return sensor.fast_recovery; });
+                    telemetry.relock_reason = used_fast ? "local relock succeeded (fast recovery used)" : "local relock succeeded";
                     telemetry.track_recovery_required = false;
                 } else if (relock.acquisition_error) {
                     {

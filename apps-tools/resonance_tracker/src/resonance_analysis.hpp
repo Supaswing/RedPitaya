@@ -129,6 +129,7 @@ struct LocalRelockResult {
     bool success = false;
     bool cancelled = false;
     bool acquisition_error = false;
+    bool fast_recovery = false;
     std::uint32_t sensor_id = 0;
     std::size_t attempts = 0;
     std::size_t measured_points = 0;

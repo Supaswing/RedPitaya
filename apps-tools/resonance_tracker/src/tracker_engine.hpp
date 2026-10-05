@@ -74,9 +74,13 @@ private:
         std::array<Complex, 5> derivative_iq{};
         std::array<std::array<double, 5>, 5> normal_inverse{};
         std::uint32_t loss_counter = 0;
+        std::vector<ComplexMeasurement> recovery_reference;
     };
 
     bool prepare(PreparedResonance& resonance);
+    LocalRelockResult tryFastRelock(const PreparedResonance& resonance, std::uint32_t start_hz,
+                                    std::uint32_t stop_hz, ComplexMeasurementSource& source,
+                                    const CancellationCheck& cancelled, const RelockProgress& progress);
     bool fitFive(const PreparedResonance& resonance, const std::array<Complex, 5>& live,
                  TrackingSensorResult& result) const;
     bool fitThree(const PreparedResonance& resonance, const std::array<Complex, 5>& live,
