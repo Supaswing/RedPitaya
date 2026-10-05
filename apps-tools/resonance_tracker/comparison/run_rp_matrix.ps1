@@ -2,6 +2,7 @@ param(
     [string]$HostName = 'rp-f0f8d5.local',
     [ValidateRange(10, 300)][int]$TrackSeconds = 20,
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'output'),
+    [switch]$LegacyUnaveragedOnly,
     [switch]$Plan
 )
 
@@ -16,6 +17,7 @@ $configs = @(
     [pscustomobject]@{ Shift = 16; TrackAverages = 1; Label = 'near_1000Hz' },
     [pscustomobject]@{ Shift = 14; TrackAverages = 1; Label = 'near_4000Hz' }
 )
+if ($LegacyUnaveragedOnly) { $configs = @($configs | Where-Object { $_.TrackAverages -eq 1 }) }
 $matrixRows = @($configs | ForEach-Object {
     $samples = [math]::Pow(2, $_.Shift) * $_.TrackAverages
     [pscustomobject]@{

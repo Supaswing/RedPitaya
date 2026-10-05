@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import json
 import math
 import statistics
 from collections import defaultdict
@@ -43,6 +44,8 @@ def analyze_raw(path, sample_rate_khz, if_hz, bandwidth_hz):
     raw = read_rows(path)
     frames = defaultdict(list)
     gamma = defaultdict(list)
+    relocks = defaultdict(int)
+    losses = defaultdict(int)
     for row in raw:
         fields = row["record"].split(",")
         phase = row["phase"]
@@ -52,6 +55,10 @@ def analyze_raw(path, sample_rate_khz, if_hz, bandwidth_hz):
                 raise ValueError(f"Point count mismatch in {path}: {row['record']}")
             frames[points].append((float(row["elapsed_s"]), int(fields[1]),
                                    (float(fields[2]), float(fields[5]))))
+        elif phase in ("tracking_5pt", "tracking_3pt") and row["record"].startswith("RTP,relock"):
+            relocks[int(phase.split("_")[1].removesuffix("pt"))] += 1
+        elif phase in ("tracking_5pt", "tracking_3pt") and row["record"].startswith("RTW,tracking") and "_lost," in row["record"]:
+            losses[int(phase.split("_")[1].removesuffix("pt"))] += 1
         elif phase.startswith("gamma_sensor_") and fields[0] == "G" and len(fields) == 5:
             sensor = int(phase.rsplit("_", 1)[1])
             gamma[sensor].append((int(fields[2]), complex(float(fields[3]), float(fields[4]))))
@@ -59,8 +66,8 @@ def analyze_raw(path, sample_rate_khz, if_hz, bandwidth_hz):
     for points in (5, 3):
         mode = frames[points]
         sequences = [frame[1] for frame in mode]
-        if any(b != a + 1 for a, b in zip(sequences, sequences[1:])):
-            raise ValueError(f"RTD sequence gap or duplicate in {path}, {points}-point")
+        gaps = [b - a - 1 for a, b in zip(sequences, sequences[1:]) if b > a + 1]
+        nonincreasing = sum(b <= a for a, b in zip(sequences, sequences[1:]))
         intervals = [b[0] - a[0] for a, b in zip(mode, mode[1:])]
         for sensor in (1, 2):
             frequency = [frame[2][sensor - 1] for frame in mode]
@@ -72,6 +79,11 @@ def analyze_raw(path, sample_rate_khz, if_hz, bandwidth_hz):
                            "if_hz": if_hz, "tracking_bandwidth_hz": bandwidth_hz,
                            "tracker_points": points, "sensor_id": sensor,
                            "tracking_frames": len(mode),
+                           "sequence_gap_count": len(gaps),
+                           "missing_sequence_frames": sum(gaps),
+                           "nonincreasing_sequence_count": nonincreasing,
+                           "relock_event_count": relocks[points],
+                           "loss_event_count": losses[points],
                            "mean_frequency_hz": statistics.mean(frequency) if frequency else "",
                            "frequency_noise_rms_population_hz": (statistics.pstdev(frequency)
                                                                   if len(frequency) > 1 else ""),
@@ -89,15 +101,24 @@ def main():
     parser.add_argument("block", type=Path, help="output/setupA_nanovna_<rate>k_<timestamp> directory")
     args = parser.parse_args()
     rows = []
+    manifest_path = args.block / "manifest.json"
+    completed = None
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        completed = {(entry["if_hz_requested"], entry["bandwidth_hz_requested"])
+                     for entry in manifest["conditions"] if entry["status"] == "complete"}
     for if_hz in (16_000, 32_000):
         for bw in (100, 1_000, 4_000):
+            if completed is not None and (if_hz, bw) not in completed:
+                continue
             raw = args.block / f"if{if_hz}_bw{bw}" / "raw.csv"
             if not raw.exists():
                 continue
             name = args.block.name
-            rate = 192 if "_192k_" in name else 384 if "_384k_" in name else None
+            rate = next((value for value in (192, 384, 768)
+                         if f"_{value}k_" in name), None)
             if rate is None:
-                parser.error("block directory name must contain _192k_ or _384k_")
+                parser.error("block directory name must contain _192k_, _384k_, or _768k_")
             rows.extend(analyze_raw(raw, rate, if_hz, bw))
     if not rows:
         parser.error("No condition raw.csv files were found")

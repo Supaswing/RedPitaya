@@ -1,1 +1,5 @@
 __pycache__/
+
+# Generated captures, CSV summaries, plots, logs, and rendered reports.
+/output/
+/generic_shtc_template/

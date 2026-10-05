@@ -1,6 +1,6 @@
 """Capture one NanoVNA firmware's 2 IF x 3 bandwidth comparison block.
 
-Run once after flashing each 192k/384k firmware image. This script does not
+Run once after flashing each 192k/384k/768k firmware image. This script does not
 flash firmware or claim that a dark panel proves SPI traffic is absent.
 """
 
@@ -50,7 +50,8 @@ class Session:
         self.device.flush()
         self.log("command", command)
 
-    def receive(self, phase, timeout, until=None, minimum_rtd=0, duration=0):
+    def receive(self, phase, timeout, until=None, minimum_rtd=0, duration=0,
+                allow_missing_until=False):
         deadline = time.perf_counter() + timeout
         minimum_end = time.perf_counter() + duration
         records = []
@@ -72,6 +73,8 @@ class Session:
                     return records
             if not until and time.perf_counter() >= minimum_end and rtd_count >= minimum_rtd:
                 return records
+        if until and allow_missing_until:
+            return records
         if until:
             raise RuntimeError(f"Missing {until} in phase {phase}; raw log was retained")
         raise RuntimeError(f"Only {rtd_count} RTD frames in phase {phase}; raw log was retained")
@@ -87,13 +90,13 @@ def query_bandwidth(session, requested):
     return valid[-1]
 
 
-def baseline_info(records, requested_if, requested_bw):
+def baseline_info(records, requested_bw):
     starts = [r.split(",") for r in records if r.startswith("RTB,")]
     if len(starts) != 1 or len(starts[0]) < 11:
         raise RuntimeError("Expected exactly one complete RTB configuration record")
     start = starts[0]
     if (int(start[2]) != 2 or int(start[3]) != 20_000_000 or int(start[4]) != 26_000_000 or
-            int(start[5]) != 101 or int(start[6]) != requested_if or int(start[8]) != requested_bw or
+            int(start[5]) != 101 or int(start[8]) != requested_bw or
             int(start[9]) != 3):
         raise RuntimeError(f"Unexpected RTB configuration: {','.join(start)}")
     centers = {}
@@ -103,7 +106,10 @@ def baseline_info(records, requested_if, requested_bw):
             centers[int(fields[1])] = int(round(float(fields[2])))
     if set(centers) != {1, 2}:
         raise RuntimeError(f"Expected two resonance centers; got {centers}")
-    return {"reported_if_hz": int(start[6]), "reported_baseline_bw_hz": int(start[7]),
+    # This firmware prints the compile-time FREQUENCY_OFFSET in RTB even after
+    # the runtime `offset` command updates IF_OFFSET. It is not an IF readback.
+    return {"rtb_compile_time_if_hz": int(start[6]), "runtime_if_verified": False,
+            "reported_baseline_bw_hz": int(start[7]),
             "reported_tracking_bw_hz": int(start[8]), "centers_hz": centers}
 
 
@@ -119,9 +125,15 @@ def verify_display_off(session, off_command, status_command, off_pattern):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default="COM11")
-    parser.add_argument("--sample-rate-khz", type=int, choices=(192, 384), required=True)
-    parser.add_argument("--firmware", type=Path, required=True,
+    parser.add_argument("--sample-rate-khz", type=int, choices=(192, 384, 768), required=True)
+    parser.add_argument("--if-values", type=int, nargs="+", choices=IF_VALUES,
+                        default=IF_VALUES, help="IF blocks to capture; useful for resuming after failure")
+    parser.add_argument("--bandwidth-values", type=int, nargs="+", choices=BW_VALUES,
+                        default=BW_VALUES, help="bandwidths to capture; useful for resuming after failure")
+    parser.add_argument("--firmware", type=Path,
                         help="exact binary flashed before this block; used for provenance")
+    parser.add_argument("--installed-firmware-unverified", action="store_true",
+                        help="capture with firmware already installed, recording image identity as unverified")
     parser.add_argument("--tracking-seconds", type=float, default=20.0)
     parser.add_argument("--gamma-samples", type=int, default=250,
                         help="fixed-frequency complex samples per sensor and condition")
@@ -129,6 +141,8 @@ def main():
     parser.add_argument("--display-off-command", help="firmware serial command to disable display")
     parser.add_argument("--display-status-command", help="firmware serial command reporting display state")
     parser.add_argument("--display-off-pattern", help="full-line regex matching the OFF status reply")
+    parser.add_argument("--display-state-unverified", action="store_true",
+                        help="capture without display OFF verification, explicitly marked in the manifest")
     parser.add_argument("--plan", action="store_true", help="show matrix without opening the port")
     args = parser.parse_args()
     if args.tracking_seconds <= 0 or not 20 <= args.gamma_samples <= 3000:
@@ -136,34 +150,40 @@ def main():
     if args.plan:
         print(json.dumps({"sample_rate_khz": args.sample_rate_khz,
                           "conditions": [{"if_hz": if_hz, "bandwidth_hz": bw}
-                                         for if_hz in IF_VALUES for bw in BW_VALUES],
+                                         for if_hz in args.if_values for bw in args.bandwidth_values],
                           "tracking_seconds_per_mode": args.tracking_seconds,
                           "gamma_samples_per_sensor": args.gamma_samples}, indent=2))
         return
-    if not args.firmware.is_file():
+    if not args.installed_firmware_unverified and (args.firmware is None or not args.firmware.is_file()):
         parser.error("--firmware must name the binary just flashed")
-    if not all((args.display_off_command, args.display_status_command, args.display_off_pattern)):
+    if args.firmware is not None and not args.firmware.is_file():
+        parser.error("--firmware path does not exist")
+    if not args.display_state_unverified and not all((args.display_off_command, args.display_status_command, args.display_off_pattern)):
         parser.error("display OFF command, status command, and OFF reply pattern are required")
-    try:
-        re.compile(args.display_off_pattern)
-    except re.error as exc:
-        parser.error(f"invalid --display-off-pattern: {exc}")
-    digest = firmware_hash(args.firmware)
-    print(f"Expected firmware: {args.firmware.resolve()} SHA256 {digest}", flush=True)
-    if input("Confirm this exact binary is flashed (type FLASHED): ").strip() != "FLASHED":
-        raise SystemExit("Firmware identity was not confirmed; no capture started")
+    if args.display_off_pattern:
+        try:
+            re.compile(args.display_off_pattern)
+        except re.error as exc:
+            parser.error(f"invalid --display-off-pattern: {exc}")
+    digest = firmware_hash(args.firmware) if args.firmware else None
+    if not args.installed_firmware_unverified:
+        print(f"Expected firmware: {args.firmware.resolve()} SHA256 {digest}", flush=True)
+        if input("Confirm this exact binary is flashed (type FLASHED): ").strip() != "FLASHED":
+            raise SystemExit("Firmware identity was not confirmed; no capture started")
     block = args.output_root / (f"setupA_nanovna_{args.sample_rate_khz}k_"
                                 + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"))
     block.mkdir(parents=True, exist_ok=False)
     manifest = {"sample_rate_khz_claimed": args.sample_rate_khz,
-                "firmware_path": str(args.firmware.resolve()), "firmware_sha256": digest,
+                "firmware_path": str(args.firmware.resolve()) if args.firmware else None,
+                "firmware_sha256": digest,
+                "flashed_image_identity_verified": not args.installed_firmware_unverified,
                 "display_off_visually_confirmed": False, "display_status_verified": False,
                 "display_spi_disabled_verified": False,
                 "port": args.port, "started_utc": utc_now(), "conditions": []}
     try:
         with serial.Serial(args.port, 38400, timeout=0.1) as device:
-            for if_hz in IF_VALUES:
-                for bw in BW_VALUES:
+            for if_hz in args.if_values:
+                for bw in args.bandwidth_values:
                     condition = block / f"if{if_hz}_bw{bw}"
                     condition.mkdir()
                     entry = {"if_hz_requested": if_hz, "bandwidth_hz_requested": bw,
@@ -177,19 +197,20 @@ def main():
                         try:
                             session.send("rtrack stop")
                             session.send("rtrack debug 0")
-                            verify_display_off(session, args.display_off_command,
-                                               args.display_status_command, args.display_off_pattern)
-                            entry["display_status_verified"] = True
-                            manifest["display_status_verified"] = True
-                            if not manifest["display_off_visually_confirmed"]:
-                                if input("Is the NanoVNA panel visibly dark? Type DISPLAY OFF: ").strip() != "DISPLAY OFF":
-                                    raise RuntimeError("Panel OFF was not visually confirmed")
-                                manifest["display_off_visually_confirmed"] = True
+                            if not args.display_state_unverified:
+                                verify_display_off(session, args.display_off_command,
+                                                   args.display_status_command, args.display_off_pattern)
+                                entry["display_status_verified"] = True
+                                manifest["display_status_verified"] = True
+                                if not manifest["display_off_visually_confirmed"]:
+                                    if input("Is the NanoVNA panel visibly dark? Type DISPLAY OFF: ").strip() != "DISPLAY OFF":
+                                        raise RuntimeError("Panel OFF was not visually confirmed")
+                                    manifest["display_off_visually_confirmed"] = True
                             session.send("rtrack sensors 2")
                             session.send("version")
                             session.receive("initial", 2, duration=1)
-                            probe = query_bandwidth(session, 8_000)
-                            expected_probe = 4_000 if args.sample_rate_khz == 192 else 8_000
+                            probe = query_bandwidth(session, 16_000)
+                            expected_probe = args.sample_rate_khz * 1_000 // 48
                             if probe != expected_probe:
                                 raise RuntimeError(f"Sample-rate probe gave {probe} Hz; expected {expected_probe} Hz")
                             entry["sample_rate_probe_bandwidth_hz"] = probe
@@ -200,7 +221,7 @@ def main():
                             session.send("rtrack points 5")
                             session.send("rtrack baseline 20000000 26000000")
                             baseline = session.receive("baseline", 150, until="RTB_DONE,")
-                            entry.update(baseline_info(baseline, if_hz, bw))
+                            entry.update(baseline_info(baseline, bw))
                             print(f"IF {if_hz} BW {bw}: centers {entry['centers_hz']}", flush=True)
                             for points in (5, 3):
                                 session.send(f"rtrack points {points}")
@@ -213,9 +234,17 @@ def main():
                             session.send("rtrack points 5")
                             session.send("rtrack debug 1")
                             session.send("rtrack once")
-                            debug = session.receive("complex_debug_frame", 15, until="RTD,")
-                            if sum(r.startswith("RTM,") for r in debug) < 10:
-                                raise RuntimeError("Incomplete two-sensor complex debug frame")
+                            debug = session.receive("complex_debug_frame", 15, until="RTD,",
+                                                    allow_missing_until=True)
+                            rtm = [r.split(",") for r in debug if r.startswith("RTM,")]
+                            entry["debug_complete"] = (
+                                len(rtm) >= 10 and len({r[1] for r in rtm[:10]}) == 1 and
+                                {(int(r[2]), int(r[3])) for r in rtm[:10]} ==
+                                {(sensor, offset) for sensor in (1, 2)
+                                 for offset in (-2, -1, 0, 1, 2)})
+                            entry["debug_rtm_points"] = len(rtm)
+                            entry["debug_rtd_present"] = any(r.startswith("RTD,") for r in debug)
+                            session.send("rtrack stop")
                             session.send("rtrack debug 0")
                             for sensor in (1, 2):
                                 frequency = entry["centers_hz"][sensor]

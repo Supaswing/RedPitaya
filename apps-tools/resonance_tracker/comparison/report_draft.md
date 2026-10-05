@@ -1,5 +1,7 @@
 # NanoVNA / Red Pitaya sensor comparison — working report
 
+Superseded for review by [comparison_report_2026-09-29.md](comparison_report_2026-09-29.md).
+
 Status: **fresh two-platform static captures; setup match and signal/SNR still
 unverified**, 28 September 2026. This draft records the available data and the
 measurement contract. The datasets below must not yet be used to rank the

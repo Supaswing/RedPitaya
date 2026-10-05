@@ -103,14 +103,17 @@ try {
     }
     $writer.Flush()
     if (-not $finished) { throw 'Baseline did not complete within 120 seconds; inspect live state before retry.' }
-    if (-not $latest.ContainsKey('RT_TRACK_AVERAGES') -or
-        [int]$latest.RT_TRACK_AVERAGES -ne $TrackingAverages) {
+    $legacySingleAverage = -not $latest.ContainsKey('RT_TRACK_AVERAGES') -and $TrackingAverages -eq 1
+    if (-not $legacySingleAverage -and
+        (-not $latest.ContainsKey('RT_TRACK_AVERAGES') -or
+         [int]$latest.RT_TRACK_AVERAGES -ne $TrackingAverages)) {
         throw "RT_TRACK_AVERAGES readback mismatch; requested $TrackingAverages, received $($latest.RT_TRACK_AVERAGES). Deploy the updated app before this matrix."
     }
     $result = [pscustomobject]@{
         capture = $OutputPath; elapsed_s = $clock.Elapsed.TotalSeconds
         window_shift = $WindowShift; coarse_averages = $CoarseAverages
         refine_averages = $RefineAverages; tracking_averages = $TrackingAverages
+        tracking_averages_readback = if ($legacySingleAverage) { 'legacy_single' } else { 'verified' }
         overview_points = 151
         command_ack = $latest.RT_COMMAND_ACK; state = $latest.RT_STATE
         baseline_sequence = $latest.RT_BASELINE_SEQUENCE

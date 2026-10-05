@@ -1,5 +1,8 @@
 # Resonance tracker architecture
 
+The equations and acceptance thresholds used by the backend are documented in
+[Tracking and relocking calculations](tracking_and_relocking.md).
+
 ## Control and ownership
 
 ```text

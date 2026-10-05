@@ -1,7 +1,7 @@
 # Two-sensor resonance reader comparison — review report
 
 **Setup A · NanoVNA and Red Pitaya STEMlab 125-14 Gen 2 · 29 September 2026**  
-**Status:** static frequency-noise and frame-rate results complete for the saved captures; physical matching and NanoVNA display state remain unverified. Sensor signal and SNR were not measured.
+**Status (updated 30 September):** static frequency-noise and frame-rate results complete for the saved captures; physical matching remains unverified. The user confirms that the NanoVNA display was not displaying during both the selected 28 September capture and the 30 September rate matrix. Sensor signal and SNR were not measured.
 
 ## 1. Objective and scope
 
@@ -20,7 +20,7 @@ The comparison uses a 20-second Red Pitaya `WINDOW_SHIFT=20` capture and the Nan
 | Tracking | Two sensors; five points, then middle three points from the same baseline | Two sensors; five points, then middle three points from the same baseline |
 | Integration/bandwidth | FPGA `WINDOW_SHIFT=20`: 2²⁰ samples at 125 MS/s per point; effective noise bandwidth not calibrated here | 100 Hz configured tracking bandwidth; 16 kHz IF reported by baseline record |
 | Source setting | User reports 800 mV **peak into 50 Ω** at amplitude register `0x10`; app writes `0x0800` | User reports DDS 8 mA into 50 Ω, 400 mV RMS at source, 200 mV RMS at antenna |
-| Display state | No local display in the reader path | Not recorded for this capture; a display-off measurement has not been verified |
+| Display state | No local display in the reader path | User confirms no visible screen content during the selected capture and later matrix; firmware display state and LCD bus activity were not logged |
 | Calibration/plane | Raw coherent incident/reflected I/Q ratio, no absolute S11 calibration claimed | Metadata says calibrated at coax output; tracker uses raw measurement/reference ratio before the usual NanoVNA calibration/error-term path |
 | Received level / ADC %FS / TX-RX gain | Not recorded with a validated voltage or full-scale conversion | Not recorded |
 
@@ -49,13 +49,13 @@ For each unchanged tracking interval, `dF RMS` is the population root-mean-squar
 
 \*The Red Pitaya three-point SD and dF RMS use only sequence-matched WebSocket frames (65.3% of backend sequences). They are **observed-subset statistics**, not established full-backend repeatability. Its apparent sensor-1 improvement over five-point tracking must not be treated as a mode effect.
 
-In the two complete five-point records, the Red Pitaya dF RMS was about **0.84 times** the NanoVNA value for each sensor, at the settings above. That describes these recordings; source level, bandwidth, display activity, and exact geometry are not controlled well enough to attribute the difference to the platform.
+In the two complete five-point records, the Red Pitaya dF RMS was about **0.84 times** the NanoVNA value for each sensor, at the settings above. That describes these recordings; source level, effective bandwidth, and exact geometry are not controlled well enough to attribute the difference to the platform. Visible NanoVNA screen rendering was absent by user observation.
 
 ![Five-point frequency noise by reader](output/setupA_frequency_noise.png)
 
 *Figure 1.* Population dF RMS of every complete five-point frequency estimate in the selected captures.
 
-Define the **frequency-noise ratio** as NanoVNA five-point dF RMS divided by Red Pitaya shift-20 five-point dF RMS for the same sensor. It is **1.192 / 1.187** for sensors 1 / 2. A ratio above one means higher observed frequency scatter in the selected NanoVNA capture. It is not sensor SNR, a complex reflection-ratio noise statistic, or an intrinsic reader-noise ratio; excitation and display conditions differ or are unverified.
+Define the **frequency-noise ratio** as NanoVNA five-point dF RMS divided by Red Pitaya shift-20 five-point dF RMS for the same sensor. It is **1.192 / 1.187** for sensors 1 / 2. A ratio above one means higher observed frequency scatter in the selected NanoVNA capture. It is not sensor SNR, a complex reflection-ratio noise statistic, or an intrinsic reader-noise ratio; excitation, effective bandwidth, and physical matching remain uncontrolled. User confirmation removes visible screen rendering as an explanation for this observed difference, while LCD bus activity remains unknown.
 
 ![NanoVNA to Red Pitaya frequency-noise ratio](output/setupA_frequency_noise_ratio.png)
 
@@ -105,9 +105,13 @@ The NanoVNA live mean Q changed from about **81/92** in five-point mode to **159
 
 ## 6. Conclusions and review items
 
-The saved data support a **descriptive static comparison**: both readers tracked the two intended frequency regions, and the selected five-point captures contain consecutive complete two-sensor frames. In those captures the NanoVNA produced 7.25 frames/s with dF RMS 4.132/4.674 kHz, while the Red Pitaya at shift 20 produced 11.48 frames/s with dF RMS 3.466/3.939 kHz. This single matched-in-time capture pair is insufficient for a robust platform ranking. The three-point Red Pitaya noise estimate has incomplete WebSocket coverage.
+The saved data support a **descriptive static comparison**: both readers tracked the two intended frequency regions, and the selected five-point captures contain consecutive complete two-sensor frames. In those captures the NanoVNA produced 7.25 frames/s with dF RMS 4.132/4.674 kHz, while the Red Pitaya at shift 20 produced 11.48 frames/s with dF RMS 3.466/3.939 kHz. This single near-time capture pair is insufficient for a robust platform ranking. The three-point Red Pitaya noise estimate has incomplete WebSocket coverage.
 
-Before treating this as a matched performance result, verify whether antenna/sensor positions and the recorded 0.15 m MMCX RF path stayed fixed when swapping readers; clarify the geometry entry `240mm (75cm)`; and establish NanoVNA display state for the selected run (display-off is **not verified**). The metadata records calibration at the coax output, but this does not establish calibration of the tracker’s raw ratio. Measured source, received, and ADC levels are still needed to compare operating points. A controlled physical sensor change is required for signal and SNR. None of these pending quantities has been filled with an inferred value.
+The user confirms no visible NanoVNA display content in **both** the selected comparison capture and the [30 September NanoVNA matrix](nanovna_matrix_2026-09-30.md). Visible screen rendering therefore does not explain the selected NanoVNA's observed 19% higher five-point frequency scatter or lower frame rate. Under the same no-display observation, 192 ksample/s tracking had no relocks, while 384 and 768 ksample/s tracking relocked frequently and 768k baseline fits often degraded. The later matrix does not supply a matched Red Pitaya comparison at those rates, and tracker loss/relock motion prevents treating its frequency spread as stationary reader noise. The confirmation does not establish whether LCD SPI traffic continued.
+
+The platform comparison remains descriptive because source level, effective noise bandwidth, and physical matching are not established as equal. The observation concerns visible content, not a verified LCD power or SPI state.
+
+Before treating this as a matched performance result, verify whether antenna/sensor positions and the recorded 0.15 m MMCX RF path stayed fixed when swapping readers, and clarify the geometry entry `240mm (75cm)`. The metadata records calibration at the coax output, but this does not establish calibration of the tracker’s raw ratio. Measured source, received, and ADC levels are still needed to compare operating points. A controlled physical sensor change is required for signal and SNR. None of these pending quantities has been filled with an inferred value.
 
 ### Reproducibility and source files
 

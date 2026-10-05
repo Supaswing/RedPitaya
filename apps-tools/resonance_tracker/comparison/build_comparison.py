@@ -126,7 +126,7 @@ def main():
         ratios.append({"sensor_id": sensor, "tracker_points": 5,
                        "nanovna_df_rms_hz": nano_noise, "redpitaya_df_rms_hz": rp_noise,
                        "noise_ratio_nanovna_over_redpitaya": nano_noise / rp_noise,
-                       "interpretation": "descriptive; source level and display state differ or are unverified"})
+                       "interpretation": "descriptive; no visible NanoVNA display content per user; source level, effective bandwidth, and geometry remain unmatched"})
     with (OUTPUT / "setupA_frequency_noise_ratio.csv").open("w", newline="", encoding="utf-8") as target:
         writer = csv.DictWriter(target, fieldnames=ratios[0].keys())
         writer.writeheader()

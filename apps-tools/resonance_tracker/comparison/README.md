@@ -29,8 +29,9 @@ the RF output voltage has not been independently measured. If the stated
 0.566 V RMS, 6.4 mW, or about +8.06 dBm. Do not use that conditional conversion
 as a measured output power. The user reports NanoVNA DDS output of 8 mA into
 50 ohms, corresponding to 400 mV RMS at the source and 200 mV RMS at the
-antenna. The source amplitudes and the NanoVNA display state were not matched
-or verified in the saved captures.
+antenna. The source amplitudes were not matched in the saved captures. The user
+confirms no visible NanoVNA display content during the selected 28 September
+capture and the 30 September matrix; LCD bus activity was not measured.
 
 ## Existing source data
 
