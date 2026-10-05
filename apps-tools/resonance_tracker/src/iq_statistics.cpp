@@ -24,6 +24,36 @@ ScalarStatistics calculate_scalar(const Records& records, Getter getter, Predica
     if (count > 1) result.sample_standard_deviation = std::sqrt(sum_squared_difference / (count - 1));
     return result;
 }
+
+template <typename Records, typename Real, typename Imag, typename Predicate>
+ComplexNoiseStatistics calculate_noise(const Records& records, Real real, Imag imag, Predicate include)
+{
+    ComplexNoiseStatistics result;
+    result.amplitude_std = calculate_scalar(records, [&](const auto& r) {
+        return std::hypot(real(r), imag(r));
+    }, include).sample_standard_deviation;
+    const double mean_real = calculate_scalar(records, real, include).mean;
+    const double mean_imag = calculate_scalar(records, imag, include).mean;
+    const double magnitude = std::hypot(mean_real, mean_imag);
+    if (magnitude == 0.0) return result; // A zero mean has no radial/phase reference direction.
+    result.direction_valid = true;
+    const double ux = mean_real / magnitude, uy = mean_imag / magnitude;
+    result.radial_std = calculate_scalar(records, [&](const auto& r) {
+        return (real(r) - mean_real) * ux + (imag(r) - mean_imag) * uy;
+    }, include).sample_standard_deviation;
+    result.tangential_std = calculate_scalar(records, [&](const auto& r) {
+        return -(real(r) - mean_real) * uy + (imag(r) - mean_imag) * ux;
+    }, include).sample_standard_deviation;
+    const auto include_phase = [&](const auto& r) {
+        return include(r) && std::hypot(real(r), imag(r)) > 0.0;
+    };
+    for (const auto& r : records) if (include_phase(r)) ++result.phase_count;
+    result.phase_std = calculate_scalar(records, [&](const auto& r) {
+        // Rotate into the mean direction before atan2, avoiding the +/-180 degree wrap.
+        return std::atan2(-real(r) * uy + imag(r) * ux, real(r) * ux + imag(r) * uy) * kRadiansToDegrees;
+    }, include_phase).sample_standard_deviation;
+    return result;
+}
 }
 
 RollingIqStatistics::RollingIqStatistics(std::size_t capacity) : capacity_(capacity) {}
@@ -62,6 +92,12 @@ IqStatisticsSnapshot RollingIqStatistics::snapshot() const
 
     const auto include_all = [](const Record&) { return true; };
     const auto include_ratio = [](const Record& record) { return record.ratio_valid; };
+    result.inc_noise = calculate_noise(records_, [](const Record& r) { return r.inc_i; },
+                                      [](const Record& r) { return r.inc_q; }, include_all);
+    result.ref_noise = calculate_noise(records_, [](const Record& r) { return r.ref_i; },
+                                      [](const Record& r) { return r.ref_q; }, include_all);
+    result.ratio_noise = calculate_noise(records_, [](const Record& r) { return r.ratio_real; },
+                                        [](const Record& r) { return r.ratio_imag; }, include_ratio);
     result.inc_i = calculate_scalar(records_, [](const Record& record) { return record.inc_i; }, include_all);
     result.inc_q = calculate_scalar(records_, [](const Record& record) { return record.inc_q; }, include_all);
     result.ref_i = calculate_scalar(records_, [](const Record& record) { return record.ref_i; }, include_all);

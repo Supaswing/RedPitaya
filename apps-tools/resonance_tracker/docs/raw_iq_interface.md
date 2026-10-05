@@ -92,6 +92,11 @@ positive-Q convention.
 
 ## Target hardware test
 
+The Raw I/Q noise additions use the existing ready-qualified samples only and
+require no changes to FPGA registers, acquisition sequencing, or I/Q scaling.
+Their rolling-window definitions and telemetry are in `architecture.md` under
+Raw-I/Q noise diagnostics.
+
 After loading the normal application bitstream, run from the target checkout:
 
 ```sh

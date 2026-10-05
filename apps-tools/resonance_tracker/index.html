@@ -66,6 +66,15 @@
                 </tbody>
             </table>
         </section>
+        <section class="statistics">
+            <div class="section-head"><div><h2>Complex noise</h2><p>Sample spread over the same rolling window; requires at least two acquisitions.</p></div></div>
+            <table><thead><tr><th>Response</th><th>amplitude_std</th><th>phase_std [deg]</th><th>radial_std</th><th>tangential_std</th></tr></thead><tbody>
+                    <tr><th>Incident</th><td id="inc-amplitude-std">-</td><td id="inc-phase-std">-</td><td id="inc-radial-std">-</td><td id="inc-tangential-std">-</td></tr>
+                    <tr><th>Reflected</th><td id="ref-amplitude-std">-</td><td id="ref-phase-std">-</td><td id="ref-radial-std">-</td><td id="ref-tangential-std">-</td></tr>
+                    <tr><th>R</th><td id="ratio-amplitude-std">-</td><td id="ratio-phase-std">-</td><td id="ratio-radial-std">-</td><td id="ratio-tangential-std">-</td></tr>
+            </tbody></table>
+            <p class="control-note">Amplitude is magnitude spread. Radial and tangential noise are along and perpendicular to the mean complex response. Incident/reflected values use ADC units; R uses dimensionless ratio units. Phase deviations wrap around the mean direction. A zero mean has no phase/radial/tangential direction; undefined values show &ndash;. Retune to compare noise at different frequencies around resonance.</p>
+        </section>
         <section class="history"><div class="section-head"><h2>Recent magnitude</h2><span>bounded to 128 points</span></div><canvas id="plot" width="900" height="220"></canvas></section>
         </section>
         <section id="dashboard-baseline" class="dashboard" hidden>
@@ -157,7 +166,7 @@
     <script src="js/sensors.js?v=3a1"></script>
     <script src="js/transport.js?v=2b2"></script>
     <script src="js/dashboards/stopped.js?v=2b2"></script>
-    <script src="js/dashboards/raw_iq.js?v=2b6"></script>
+    <script src="js/dashboards/raw_iq.js?v=2b7"></script>
     <script src="js/dashboards/baseline.js?v=3a1"></script>
     <script src="js/dashboards/diagnostics.js?v=3a1"></script>
     <script src="js/dashboards/tracking.js?v=3a1"></script>

@@ -5,6 +5,38 @@ The equations and acceptance thresholds used by the backend are documented in
 
 ## Control and ownership
 
+### Raw-I/Q noise diagnostics
+
+Advanced diagnostics / Raw I/Q publishes four noise metrics for incident,
+reflected, and ratio R responses using the existing rolling window (up to 128
+ready-qualified acquisitions at one frequency). The backend computes them in
+double precision and publishes them in the same locked statistics snapshot.
+Frequency changes, integration changes, and acquisition restarts reset the window.
+They describe per-acquisition spread, not standard error of an averaged response.
+
+For each prefix `RT_INC_`, `RT_REF_`, and `RT_R_`, read-only scalar parameters are:
+
+| Suffix | Meaning / units |
+| --- | --- |
+| `AMPLITUDE_STD` | Sample standard deviation of complex magnitude |
+| `PHASE_STD` | Sample standard deviation of wrapped phase deviations about the mean complex direction, degrees |
+| `RADIAL_STD` | Sample standard deviation of centered complex samples projected along the mean direction |
+| `TANGENTIAL_STD` | Sample standard deviation projected perpendicular to the mean direction |
+| `NOISE_DIRECTION_VALID` | Mean complex magnitude is nonzero, defining the projection/phase reference |
+| `PHASE_COUNT` | Number of nonzero complex samples usable for phase |
+
+Amplitude/radial/tangential use raw ADC units for incident/reflected and
+dimensionless ratio units for R. All variances use the sample denominator n-1.
+Zero incident magnitude excludes R from all ratio statistics. Zero response
+magnitude remains usable for amplitude/projections but is excluded from phase.
+The UI shows a dash for fewer than two samples, undefined direction, or fewer
+than two usable phase samples. Phase deviations use atan2 after rotation into the
+mean direction, handling the +/-180 degree boundary; a broad angular distribution
+still has a branch cut opposite the mean and should not be treated as small phase
+noise. Existing `RT_R_MAG_STDDEV` retains its meaning and equals `RT_R_AMPLITUDE_STD`.
+These metrics belong to fixed-frequency Raw I/Q acquisition; the RTM-like
+diagnostics frame consists of distinct frequencies and is not pooled for noise.
+
 ```text
 dashboard modules -> shared browser store -> one WebSocket
                                       |

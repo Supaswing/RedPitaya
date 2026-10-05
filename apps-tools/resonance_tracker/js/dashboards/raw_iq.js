@@ -89,6 +89,16 @@
         [['ratio-real','RT_R_REAL'],['ratio-imag','RT_R_IMAG'],['ratio-mag','RT_R_MAG'],['ratio-phase','RT_R_PHASE_DEG']].forEach(function (entry) { number(entry[0], entry[1], 6, ratioValid); });
         [['inc-i-mean','RT_INC_I_MEAN'],['inc-i-stddev','RT_INC_I_STDDEV'],['inc-q-mean','RT_INC_Q_MEAN'],['inc-q-stddev','RT_INC_Q_STDDEV'],['ref-i-mean','RT_REF_I_MEAN'],['ref-i-stddev','RT_REF_I_STDDEV'],['ref-q-mean','RT_REF_Q_MEAN'],['ref-q-stddev','RT_REF_Q_STDDEV']].forEach(function (entry) { number(entry[0], entry[1], 2, sampleCount > 0); });
         [['ratio-real-mean','RT_R_REAL_MEAN'],['ratio-real-stddev','RT_R_REAL_STDDEV'],['ratio-imag-mean','RT_R_IMAG_MEAN'],['ratio-imag-stddev','RT_R_IMAG_STDDEV'],['ratio-mag-mean','RT_R_MAG_MEAN'],['ratio-mag-stddev','RT_R_MAG_STDDEV'],['ratio-mean-phase','RT_R_MEAN_PHASE_DEG']].forEach(function (entry) { number(entry[0], entry[1], 6, ratioCount > 0); });
+        [['inc', 'INC', sampleCount], ['ref', 'REF', sampleCount], ['ratio', 'R', ratioCount]].forEach(function (group) {
+            const prefix = 'RT_' + group[1] + '_';
+            const directionValid = Boolean(tracker.parameter(prefix + 'NOISE_DIRECTION_VALID', false));
+            ['amplitude', 'phase', 'radial', 'tangential'].forEach(function (metric) {
+                const available = group[2] > 1 && (metric === 'amplitude' || directionValid) &&
+                    (metric !== 'phase' || Number(tracker.parameter(prefix + 'PHASE_COUNT', 0)) > 1);
+                number(group[0] + '-' + metric + '-std', prefix + metric.toUpperCase() + '_STD',
+                    group[0] === 'ratio' && metric !== 'phase' ? 7 : 4, available);
+            });
+        });
         draw(snapshot);
     }
 

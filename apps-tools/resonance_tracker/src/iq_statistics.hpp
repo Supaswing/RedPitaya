@@ -10,6 +10,15 @@ struct ScalarStatistics {
     double sample_standard_deviation = 0.0;
 };
 
+struct ComplexNoiseStatistics {
+    double amplitude_std = 0.0;
+    double phase_std = 0.0; // degrees, wrapped deviations about the mean complex direction
+    double radial_std = 0.0;
+    double tangential_std = 0.0;
+    std::size_t phase_count = 0;
+    bool direction_valid = false;
+};
+
 struct IqStatisticsSnapshot {
     std::size_t sample_count = 0;
     std::size_t ratio_sample_count = 0;
@@ -26,6 +35,9 @@ struct IqStatisticsSnapshot {
     ScalarStatistics ratio_imag_statistics;
     ScalarStatistics ratio_magnitude_statistics;
     double mean_ratio_phase_deg = 0.0;
+    ComplexNoiseStatistics inc_noise;
+    ComplexNoiseStatistics ref_noise;
+    ComplexNoiseStatistics ratio_noise;
 };
 
 class RollingIqStatistics {
