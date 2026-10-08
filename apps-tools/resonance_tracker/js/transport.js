@@ -42,6 +42,7 @@
         };
         socket.onclose = function () {
             socket = null;
+            if (tracker.trackingRecorder) tracker.trackingRecorder.stop('Connection closed.');
             showConnection('DISCONNECTED', true);
             retryStart();
         };

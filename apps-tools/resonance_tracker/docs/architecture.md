@@ -64,6 +64,31 @@ in JavaScript. Dashboard `enter`, `update`, and `leave` methods render the store
 selecting a dashboard sends no hardware command. Only explicit buttons send an
 `RT_COMMAND`.
 
+### Tracking CSV recording
+
+The tracking dashboard's `REC` / `STOP REC` toggle records browser-received
+tracking telemetry without sending a hardware command. Recording observes the
+shared store even when another dashboard is visible, including hidden sensors.
+It starts with the next complete frame and checks the matching scalar/signal
+sequence, sensor counts, all estimate arrays, and all expected signed point
+offsets before appending one CSV row per sensor. Duplicate frames are skipped.
+This captures the web publication rate, not every backend tracking update;
+sequence gaps are preserved. The timestamp is browser receipt time in UTC and
+elapsed time uses the browser's monotonic clock.
+
+CSV columns include baseline/tracking sequence, instrument/sensor state,
+frequency (Hz), Q, frequency SE (Hz), normalized residual, template gain,
+requested/applied shift (Hz), loss counter, fit validity, and points used.
+The final four columns contain JSON arrays of offsets, effective point frequency
+(Hz), real R and imaginary R, sorted by signed offset. Sensor-state enum values
+retain the transport meaning (1 tracking, 2 degraded, 3 lost).
+Stopping recording downloads `resonance_tracking_<UTC timestamp>.csv`.
+Tracking may continue independently. Recording waits for further frames when
+tracking is stopped; stop recording separately to download. Disconnect or the
+10,000-frame memory limit automatically stops recording and downloads received
+data. Empty recordings do not download a file. Keep the page open until the
+download finishes; unsaved recording buffers are browser-local.
+
 The tuning dashboard is also browser-local. It combines the latest coherent
 tracking estimate (falling back to the last valid baseline fit), the completed
 baseline curve, and raw-IQ statistics. Its target frequency, target separation,

@@ -107,7 +107,9 @@
             <section class="controls tracking-controls">
                 <label>Tracking points<select id="tracking-points"><option value="3">3 points</option><option value="5" selected>5 points</option></select></label>
                 <button id="tracking-start-button">START TRACKING</button><button id="tracking-stop-button" class="stop">STOP TRACKING</button>
+                <button id="tracking-record-button" disabled aria-pressed="false">REC</button>
             </section>
+            <p id="tracking-record-status" class="control-note" role="status">Record received tracking frames to CSV. Stop Rec downloads the log; tracking keeps running.</p>
             <p class="control-note">Tracking uses the last valid baseline template. Three-point mode is faster; five-point mode fits frequency shift, complex gain, and complex offset with more redundancy. A poor fit applies no shift. Three consecutive poor frames trigger two bounded local re-lock scans, followed by a full baseline and tracking restart if both scans fail.</p>
             <section class="analysis-panel">
                 <div class="section-head"><div><h2>Frequency tracking</h2><p id="tracking-summary">No complete tracking frame is available.</p></div><span><b id="tracking-rate">0.00</b> frames/s (1 s average) / sequence <b id="tracking-sequence">-</b> / <b id="tracking-points-used">-</b> points</span></div>
@@ -164,12 +166,13 @@
     </main>
     <script src="js/state.js?v=2b5"></script>
     <script src="js/sensors.js?v=3a1"></script>
-    <script src="js/transport.js?v=2b2"></script>
+    <script src="js/transport.js?v=2b3"></script>
     <script src="js/dashboards/stopped.js?v=2b2"></script>
     <script src="js/dashboards/raw_iq.js?v=2b7"></script>
     <script src="js/dashboards/baseline.js?v=3a1"></script>
     <script src="js/dashboards/diagnostics.js?v=3a1"></script>
-    <script src="js/dashboards/tracking.js?v=3a1"></script>
+    <script src="js/tracking_recorder.js?v=1"></script>
+    <script src="js/dashboards/tracking.js?v=3a2"></script>
     <script src="js/dashboards/tuning.js?v=3a1"></script>
     <script src="js/app.js?v=2b5"></script>
 </body>

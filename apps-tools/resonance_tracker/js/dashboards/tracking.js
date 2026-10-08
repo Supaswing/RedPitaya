@@ -345,6 +345,7 @@
     }
 
     tracker.registerDashboard('tracking', {
+        observe: tracker.trackingRecorder.observe,
         enter: function () { bindControls(); update(); },
         update: update,
         leave: function () {}
