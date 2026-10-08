@@ -1,6 +1,7 @@
 #pragma once
 
 #include "resonance_analysis.hpp"
+#include "five_point_tracker.hpp"
 
 #include <array>
 #include <complex>
@@ -28,6 +29,7 @@ struct TrackingSensorResult {
     double requested_shift_hz = 0.0;
     double applied_shift_hz = 0.0;
     std::uint32_t loss_counter = 0;
+    TrackingQualitySums quality_sums{};
 };
 
 struct TrackingFrame {
@@ -72,7 +74,7 @@ private:
         double spacing_hz = 0.0;
         std::array<Complex, 5> template_iq{};
         std::array<Complex, 5> derivative_iq{};
-        std::array<std::array<double, 5>, 5> normal_inverse{};
+        FivePointTracking::Prepared five_point{};
         std::uint32_t loss_counter = 0;
         std::vector<ComplexMeasurement> recovery_reference;
     };

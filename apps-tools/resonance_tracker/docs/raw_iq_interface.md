@@ -83,6 +83,14 @@ between otherwise identical measurements.
 
 ## Frequency and phase conventions
 
+The 2026-10-07 `convertRawIqResponse` layer preserves the existing
+incident-normalized conversion by default and supports an explicit
+`RawReflected` selection, returning signed `I_REF/Q_REF` words converted to
+double in ADC/accumulator units without division. The web worker retains the
+default representation. A raw-input tracker requires a raw-input baseline and
+matching integration/amplitude configuration; see
+[FPGA arithmetic concerns and validation](fpga_tracker_arithmetic.md).
+
 Requested frequency is an unsigned integer in Hz. The effective frequency is
 not returned by hardware; the app reports the DDS-quantized value obtained by
 rounding `frequency * 2^32 / 125000000` and converting that increment back to

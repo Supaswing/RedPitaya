@@ -8,81 +8,23 @@
 
 namespace {
 constexpr double kEpsilon = 1e-18;
-constexpr std::size_t kParameters = 5;
-
 using Complex = std::complex<double>;
-using Matrix5 = std::array<std::array<double, kParameters>, kParameters>;
 
-bool invert5x5(Matrix5 matrix, Matrix5& inverse)
+// CPU presentation only. Decisions consume quality_sums before this adapter.
+void describeFivePoint(const FivePointTracking::Prepared& prepared, TrackingSensorResult& result)
 {
-    for (std::size_t row = 0; row < kParameters; ++row)
-        for (std::size_t column = 0; column < kParameters; ++column)
-            inverse[row][column] = row == column ? 1.0 : 0.0;
-    for (std::size_t column = 0; column < kParameters; ++column) {
-        std::size_t pivot = column;
-        double largest = std::abs(matrix[column][column]);
-        for (std::size_t row = column + 1; row < kParameters; ++row) {
-            const double candidate = std::abs(matrix[row][column]);
-            if (candidate > largest) {
-                largest = candidate;
-                pivot = row;
-            }
-        }
-        if (largest < kEpsilon) return false;
-        if (pivot != column) {
-            std::swap(matrix[column], matrix[pivot]);
-            std::swap(inverse[column], inverse[pivot]);
-        }
-        const double divisor = matrix[column][column];
-        for (std::size_t index = 0; index < kParameters; ++index) {
-            matrix[column][index] /= divisor;
-            inverse[column][index] /= divisor;
-        }
-        for (std::size_t row = 0; row < kParameters; ++row) {
-            if (row == column) continue;
-            const double factor = matrix[row][column];
-            for (std::size_t index = 0; index < kParameters; ++index) {
-                matrix[row][index] -= factor * matrix[column][index];
-                inverse[row][index] -= factor * inverse[column][index];
-            }
-        }
-    }
-    return true;
-}
-
-std::array<double, kParameters> designRow(const Complex& sample, const Complex& derivative, bool imaginary)
-{
-    if (!imaginary) return {-derivative.real(), sample.real(), -sample.imag(), 1.0, 0.0};
-    return {-derivative.imag(), sample.imag(), sample.real(), 0.0, 1.0};
-}
-
-double featureEnergy(const std::array<Complex, 5>& values, std::size_t first, std::size_t last)
-{
-    Complex mean{};
-    const double count = static_cast<double>(last - first + 1);
-    for (std::size_t point = first; point <= last; ++point) mean += values[point] / count;
-    double energy = 0.0;
-    for (std::size_t point = first; point <= last; ++point) energy += std::norm(values[point] - mean);
-    return energy;
+    result.template_gain = std::sqrt(result.quality_sums.gain_squared);
+    result.frequency_se_hz = std::sqrt(result.quality_sums.frequency_variance_hz2);
+    result.normalized_residual = result.quality_sums.rss /
+        (result.quality_sums.gain_squared * prepared.template_energy + kEpsilon);
 }
 }
 
 bool FrequencyTracker::prepare(PreparedResonance& resonance)
 {
-    resonance.derivative_iq[0] = resonance.template_iq[1] - resonance.template_iq[0];
-    resonance.derivative_iq[4] = resonance.template_iq[4] - resonance.template_iq[3];
-    for (std::size_t point = 1; point < 4; ++point)
-        resonance.derivative_iq[point] = 0.5 * (resonance.template_iq[point + 1] -
-                                                resonance.template_iq[point - 1]);
-    Matrix5 normal{};
-    for (std::size_t point = 0; point < 5; ++point) {
-        for (bool imaginary : {false, true}) {
-            const auto row = designRow(resonance.template_iq[point], resonance.derivative_iq[point], imaginary);
-            for (std::size_t i = 0; i < kParameters; ++i)
-                for (std::size_t j = 0; j < kParameters; ++j) normal[i][j] += row[i] * row[j];
-        }
-    }
-    return invert5x5(normal, resonance.normal_inverse);
+    resonance.five_point = FivePointTracking::prepare(resonance.template_iq, resonance.spacing_hz);
+    resonance.derivative_iq = resonance.five_point.derivative;
+    return resonance.five_point.valid;
 }
 
 bool FrequencyTracker::configure(const std::vector<ResonanceEstimate>& resonances, std::size_t points,
@@ -152,39 +94,9 @@ std::size_t FrequencyTracker::pointCount() const
 bool FrequencyTracker::fitFive(const PreparedResonance& resonance, const std::array<Complex, 5>& live,
                                TrackingSensorResult& result) const
 {
-    std::array<double, kParameters> xty{};
-    std::array<double, kParameters> parameters{};
-    for (std::size_t point = 0; point < 5; ++point) {
-        for (bool imaginary : {false, true}) {
-            const double value = imaginary ? (live[point] - resonance.template_iq[point]).imag()
-                                           : (live[point] - resonance.template_iq[point]).real();
-            const auto row = designRow(resonance.template_iq[point], resonance.derivative_iq[point], imaginary);
-            for (std::size_t index = 0; index < kParameters; ++index) xty[index] += row[index] * value;
-        }
-    }
-    for (std::size_t i = 0; i < kParameters; ++i)
-        for (std::size_t j = 0; j < kParameters; ++j)
-            parameters[i] += resonance.normal_inverse[i][j] * xty[j];
-    double rss = 0.0;
-    for (std::size_t point = 0; point < 5; ++point) {
-        for (bool imaginary : {false, true}) {
-            const auto row = designRow(resonance.template_iq[point], resonance.derivative_iq[point], imaginary);
-            double predicted = 0.0;
-            for (std::size_t index = 0; index < kParameters; ++index)
-                predicted += row[index] * parameters[index];
-            const double observed = imaginary ? (live[point] - resonance.template_iq[point]).imag()
-                                              : (live[point] - resonance.template_iq[point]).real();
-            const double residual = observed - predicted;
-            rss += residual * residual;
-        }
-    }
-    result.requested_shift_hz = parameters[0] * resonance.spacing_hz;
-    result.template_gain = std::hypot(1.0 + parameters[1], parameters[2]);
-    result.normalized_residual = rss /
-        (result.template_gain * result.template_gain * featureEnergy(resonance.template_iq, 0, 4) + kEpsilon);
-    const double variance = (rss / 5.0) * resonance.normal_inverse[0][0];
-    result.frequency_se_hz = variance > 0.0 ? resonance.spacing_hz * std::sqrt(variance) : 0.0;
-    return true;
+    result.quality_sums = FivePointTracking::evaluate(resonance.five_point, live);
+    result.requested_shift_hz = result.quality_sums.requested_shift_hz;
+    return result.quality_sums.fit_valid;
 }
 
 bool FrequencyTracker::fitThree(const PreparedResonance& resonance, const std::array<Complex, 5>& live,
@@ -334,7 +246,11 @@ TrackingFrame FrequencyTracker::acquire(std::uint64_t sequence, ComplexMeasureme
         quality.normalized_residual = result.normalized_residual;
         quality.template_gain = result.template_gain;
         quality.loss_counter = resonance.loss_counter;
-        const TrackingQualityDecision decision = evaluateTrackingQuality(quality);
+        result.quality_sums.loss_counter = resonance.loss_counter;
+        const TrackingQualityDecision decision = points_ == 5 ?
+            evaluateTrackingQualitySums(resonance.five_point.quality, result.quality_sums) :
+            evaluateTrackingQuality(quality);
+        if (points_ == 5 && result.fit_valid) describeFivePoint(resonance.five_point, result);
         resonance.loss_counter = decision.loss_counter;
         result.poor_fit = decision.poor_fit;
         result.recovery_required = decision.recovery_required;
@@ -412,7 +328,8 @@ LocalRelockResult FrequencyTracker::tryFastRelock(const PreparedResonance& reson
     FastRelock::Limits limits;
     limits.maximum_shift_hz = 0.25 * resonance.baseline_fwhm_hz;
     limits.maximum_se_hz = 0.10 * resonance.baseline_fwhm_hz;
-    const auto estimate = FastRelock::estimate(input, limits);
+    const auto coefficients = FastRelock::prepare(input.reference, input.derivative_per_hz, limits);
+    const auto estimate = FastRelock::evaluate(coefficients, input.measured);
     if (!estimate.accepted) return result;
     const double candidate = resonance.tracked_frequency_hz + estimate.shift_hz;
     const int first = points_ == 3 ? -1 : -2;
@@ -443,7 +360,10 @@ LocalRelockResult FrequencyTracker::tryFastRelock(const PreparedResonance& reson
     quality.frequency_se_hz = confirmation.frequency_se_hz;
     quality.normalized_residual = confirmation.normalized_residual;
     quality.template_gain = confirmation.template_gain;
-    if (evaluateTrackingQuality(quality).poor_fit) return result;
+    const auto confirmation_decision = points_ == 5 ?
+        evaluateTrackingQualitySums(resonance.five_point.quality, confirmation.quality_sums) :
+        evaluateTrackingQuality(quality);
+    if (confirmation_decision.poor_fit) return result;
     result.frequency_hz = candidate + confirmation.requested_shift_hz;
     if (std::abs(result.frequency_hz - resonance.tracked_frequency_hz) > limits.maximum_shift_hz ||
         result.frequency_hz + first * resonance.spacing_hz < start_hz ||

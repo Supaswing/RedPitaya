@@ -425,6 +425,40 @@ void fastRecoveryKeepsHealthySensor()
     assert(next.complete && !next.degraded);
     assert(std::abs(next.sensors[1].frequency_hz - 33000000) < 1e-6);
 }
+
+class RawScaleSource final : public ComplexMeasurementSource {
+public:
+    bool acquire(std::uint32_t frequency, bool, ComplexMeasurement& measurement, std::string&) override
+    {
+        const Complex value = 1000000.0 * response(frequency, 32030000, 120000);
+        measurement = {frequency, frequency, value.real(), value.imag()};
+        return true;
+    }
+};
+
+void rawScaleTrackingAndRecovery()
+{
+    auto baseline = recoveryBaseline();
+    for (auto& point : baseline.template_points) { point.real *= 1000000; point.imag *= 1000000; }
+    for (auto& point : baseline.refinement) { point.real *= 1000000; point.imag *= 1000000; }
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baseline}, 5, error));
+    RawScaleSource source;
+    const auto frame = tracker.acquire(1, source);
+    assert(frame.complete && !frame.degraded && frame.sensors[0].fit_valid);
+    assert(frame.sensors[0].requested_shift_hz > 0);
+    assert(std::isfinite(frame.sensors[0].frequency_se_hz));
+    // Reset the center, lose the raw-scale response, and confirm recovery
+    // without mixing a normalized baseline with raw live points.
+    assert(tracker.configure({baseline}, 5, error));
+    loseTracking(tracker);
+    const auto recovery = tracker.relock(30000000, 34000000, source);
+    assert(recovery.success && recovery.sensors[0].fast_recovery);
+    assert(recovery.sensors[0].measured_points == 11);
+    assert(std::abs(recovery.sensors[0].frequency_hz - 32030000) < 5000);
+    assert(!tracker.acquire(4, source).degraded);
+}
 }
 
 int main()
@@ -447,5 +481,6 @@ int main()
     confirmationFailureIsSafe();
     fastRecoveryErrorsAndConfirmationCancellation();
     fastRecoveryKeepsHealthySensor();
+    rawScaleTrackingAndRecovery();
     return 0;
 }

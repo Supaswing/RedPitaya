@@ -1,5 +1,11 @@
 # Tracking and relocking calculations
 
+The 2026-10-07 refactor separates CPU coefficient preparation from division-free
+five-point tracking and six-point fast-relock kernels. The equations below still
+describe the estimates and telemetry; runtime acceptance now consumes squared
+statistics. See [FPGA arithmetic progress, concerns, and operation counts](fpga_tracker_arithmetic.md)
+for the implemented boundaries, raw reflected input option, and validation.
+
 This describes the checked-out Red Pitaya implementation, inspected on
 2026-10-05. The authoritative functions are `FrequencyTracker::prepare`,
 `fitFive`, `fitThree`, `calculateLiveQ`, `acquire`, and `relock` in
