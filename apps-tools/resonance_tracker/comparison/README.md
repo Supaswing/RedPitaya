@@ -1,5 +1,9 @@
 # NanoVNA / Red Pitaya comparison data
 
+For configurable raw incident/reflected I/Q sweeps to CSV files, see
+[raw_iq_sweep.md](raw_iq_sweep.md). `run_raw_iq_sweep.sh` defaults to
+33–37 MHz, 401 points, one sweep, and window shift 20.
+
 The current review document is [comparison_report_2026-09-29.md](comparison_report_2026-09-29.md).
 It uses the saved two-sensor captures, machine-readable comparison and
 frequency-noise ratio CSVs, plus complex amplitude/phase statistics. The
