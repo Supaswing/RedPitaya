@@ -287,6 +287,7 @@
             if (!tracker.sendCommand(5, {RT_TRACK_POINTS: {value: points}})) pendingPoints = null;
         });
         byId('tracking-stop-button').addEventListener('click', function () { tracker.sendCommand(6); });
+        byId('tracking-baseline-button').addEventListener('click', function () { tracker.sendCommand(1); });
         byId('tracking-points').addEventListener('change', function () {
             const points = Number(byId('tracking-points').value);
             pendingPoints = points;
@@ -313,6 +314,8 @@
         byId('tracking-start-button').disabled = state !== 3 || !baselineValid ||
             Number(tracker.parameter('RT_BASELINE_ACTIVE_MASK', 0)) !== Number(tracker.parameter('RT_SENSOR_ENABLE_MASK', 1));
         byId('tracking-stop-button').disabled = !active;
+        byId('tracking-baseline-button').disabled = state === 2 || state === 4 || state === 5 ||
+            Number(tracker.parameter('RT_SENSOR_ENABLE_MASK', 1)) === 0;
         const recovery = Boolean(tracker.parameter('RT_TRACK_RECOVERY_REQUIRED', false)) ||
             Boolean(tracker.parameter('RT_RELOCK_ACTIVE', false)) ||
             Boolean(tracker.parameter('RT_RELOCK_FALLBACK', false));

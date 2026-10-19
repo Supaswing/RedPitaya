@@ -12,6 +12,11 @@ and quality coefficients from the new baseline; old loss counters are discarded.
 Manual acquisition uses the current baseline settings. Automatic full-baseline
 recovery retains its saved configuration and recovery telemetry.
 
+The tracking dashboard exposes an **Acquire baseline** button using the existing
+`RT_COMMAND=1` command, including during degraded tracking, relocking, or error.
+It uses backend baseline settings and is disabled during baseline acquisition,
+resonance finding, diagnostics acquisition, or when no sensor is enabled.
+
 Continuation intent is stored with the operation request under `operation_mutex`.
 Stop/cancel, failure, or a superseding command clears it, and completion checks
 the operation generation before scheduling tracking. A baseline requested while
