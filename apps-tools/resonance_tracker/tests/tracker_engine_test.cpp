@@ -130,6 +130,38 @@ void averagesComplexTrackingPoints()
     }
 }
 
+void refreshRebuildsTracker(std::size_t points)
+{
+    FrequencyTracker tracker;
+    std::string error;
+    assert(tracker.configure({baselineEstimate()}, points, error));
+    FlatSource lost;
+    for (std::uint64_t sequence = 1; sequence <= 3; ++sequence)
+        assert(tracker.acquire(sequence, lost).complete);
+
+    auto fresh = baselineEstimate();
+    fresh.frequency_hz = 33100000;
+    fresh.spacing_hz = 45000;
+    fresh.fwhm_hz = 180000;
+    fresh.q = fresh.frequency_hz / fresh.fwhm_hz;
+    fresh.template_points.clear();
+    for (int offset = -2; offset <= 2; ++offset) {
+        const auto frequency = static_cast<std::uint32_t>(fresh.frequency_hz + offset * fresh.spacing_hz);
+        const Complex value = response(frequency, fresh.frequency_hz, 90000);
+        fresh.template_points.push_back({frequency, frequency, value.real(), value.imag()});
+    }
+    assert(tracker.configure({fresh}, points, error));
+    ReplayMeasurementSource source(fresh.template_points);
+    const auto frame = tracker.acquire(4, source);
+    assert(frame.complete && !frame.degraded && !frame.recovery_required);
+    assert(frame.sensors[0].loss_counter == 0);
+    assert(std::abs(frame.sensors[0].frequency_hz - fresh.frequency_hz) < 1e-6);
+    assert(std::abs(frame.sensors[0].requested_shift_hz) < 1e-6);
+    for (const auto& point : frame.points)
+        assert(point.measurement.requested_frequency_hz ==
+               fresh.frequency_hz + point.offset * fresh.spacing_hz);
+}
+
 void qualityCounter()
 {
     TrackingQualityInput input;
@@ -466,6 +498,8 @@ int main()
     tracksSmallShift(3);
     tracksSmallShift(5);
     averagesComplexTrackingPoints();
+    refreshRebuildsTracker(3);
+    refreshRebuildsTracker(5);
     qualityCounter();
     rejectsInvalidConfigurationAndMetrics();
     poorFramesDoNotMoveCenter(3);

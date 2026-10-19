@@ -3,6 +3,7 @@
 
 #include "iq_statistics.hpp"
 #include "instrument_state.hpp"
+#include "operation_request.hpp"
 #include "raw_iq_acquisition.hpp"
 #include "raw_iq_measurement_source.hpp"
 #include "resonance_analysis.hpp"
@@ -34,13 +35,6 @@ constexpr std::size_t kRefinementSignalSize = 202;
 constexpr std::size_t kDiagnosticSignalSize = 10;
 constexpr std::size_t kTrackSensorSignalSize = 2;
 constexpr std::size_t kTrackPointSignalSize = 10;
-
-enum class RequestedOperation {
-    Idle,
-    Baseline,
-    Diagnostics,
-    Tracking,
-};
 
 enum class WebCommand {
     None = 0,
@@ -353,8 +347,7 @@ std::atomic<int> baseline_refine_averages{3};
 std::atomic<int> tracking_points{5};
 std::atomic<int> tracking_averages{1};
 std::mutex operation_mutex;
-RequestedOperation requested_operation = RequestedOperation::Idle;
-std::uint64_t operation_generation = 0;
+OperationRequest operation_request;
 std::mutex instrument_state_mutex;
 InstrumentStateMachine instrument_state_machine;
 std::mutex telemetry_mutex;
@@ -363,28 +356,25 @@ TelemetrySnapshot telemetry;
 std::pair<RequestedOperation, std::uint64_t> operation_snapshot()
 {
     std::lock_guard<std::mutex> lock(operation_mutex);
-    return {requested_operation, operation_generation};
+    return {operation_request.operation, operation_request.generation};
 }
 
 void request_operation(RequestedOperation operation)
 {
     std::lock_guard<std::mutex> lock(operation_mutex);
-    ++operation_generation;
-    requested_operation = operation;
+    operation_request.request(operation);
 }
 
 bool operation_is_current(RequestedOperation operation, std::uint64_t generation)
 {
     std::lock_guard<std::mutex> lock(operation_mutex);
-    return requested_operation == operation && operation_generation == generation;
+    return operation_request.isCurrent(operation, generation);
 }
 
 bool complete_operation(RequestedOperation operation, std::uint64_t generation)
 {
     std::lock_guard<std::mutex> lock(operation_mutex);
-    if (requested_operation != operation || operation_generation != generation) return false;
-    requested_operation = RequestedOperation::Idle;
-    return true;
+    return operation_request.complete(operation, generation);
 }
 
 void acknowledge_command(int sequence)
@@ -658,7 +648,6 @@ void acquisition_loop()
     std::uint64_t tracking_sequence = 0;
     bool tracking_active = false;
     int active_tracking_averages = 1;
-    bool resume_tracking_after_baseline = false;
     bool was_running = false;
     bool first_point = true;
     int last_frequency_hz = requested_frequency_hz.load();
@@ -672,8 +661,6 @@ void acquisition_loop()
 
     while (!exit_requested.load()) {
         const auto [operation, generation] = operation_snapshot();
-        if (resume_tracking_after_baseline && operation != RequestedOperation::Baseline)
-            resume_tracking_after_baseline = false;
         if (tracking_active && operation != RequestedOperation::Tracking) {
             apply_state_command(InstrumentCommand::StopTracking);
             tracking_active = false;
@@ -689,6 +676,13 @@ void acquisition_loop()
             set_activity(false, false);
         }
         if (operation == RequestedOperation::Baseline) {
+            BaselineContinuation continuation;
+            {
+                std::lock_guard<std::mutex> lock(operation_mutex);
+                if (!operation_request.isCurrent(operation, generation)) continue;
+                continuation = operation_request.continuation;
+            }
+            const bool recovery_baseline = continuation == BaselineContinuation::Recovery;
             run_requested.store(false);
             was_running = false;
             first_point = true;
@@ -750,7 +744,7 @@ void acquisition_loop()
                 telemetry.track_recovery_required = false;
                 telemetry.track_rate_hz = 0.0f;
                 telemetry.relock_active = false;
-                if (!resume_tracking_after_baseline) {
+                if (!recovery_baseline) {
                     telemetry.relock_fallback = false;
                     telemetry.relock_reason.clear();
                 }
@@ -782,7 +776,7 @@ void acquisition_loop()
             config.coarse_averages = static_cast<std::size_t>(baseline_coarse_averages.load());
             config.refine_points = static_cast<std::size_t>(baseline_refine_points.load());
             config.refine_averages = static_cast<std::size_t>(baseline_refine_averages.load());
-            if (resume_tracking_after_baseline) config = fallback_config;
+            if (recovery_baseline) config = fallback_config;
             bool finding_state_entered = false;
             BaselineResult result = baseline_analyzer.acquire(
                 ++baseline_sequence, config, measurement_source,
@@ -796,34 +790,26 @@ void acquisition_loop()
                 [&]() {
                     return exit_requested.load() || !operation_is_current(RequestedOperation::Baseline, generation);
                 });
-            const bool valid = result.valid;
-            const bool resume = resume_tracking_after_baseline && valid;
+            const bool valid = result.complete && result.valid;
             bool current = false;
             {
                 std::lock_guard<std::mutex> lock(operation_mutex);
-                if (requested_operation == RequestedOperation::Baseline && operation_generation == generation) {
+                if (operation_request.isCurrent(RequestedOperation::Baseline, generation)) {
                     current = true;
                     if (!valid) {
                         if (result.complete) publish_baseline(result);
                         apply_state_command(InstrumentCommand::Fail,
                                             result.error.empty() ? "baseline acquisition failed" : result.error);
-                        requested_operation = RequestedOperation::Idle;
                     } else {
                         if (!finding_state_entered) apply_state_command(InstrumentCommand::StartResonanceFinding);
                         last_baseline = std::move(result);
                         publish_baseline(last_baseline);
                         apply_state_command(InstrumentCommand::CompleteResonanceFinding);
-                        if (resume) {
-                            ++operation_generation;
-                            requested_operation = RequestedOperation::Tracking;
-                        } else {
-                            requested_operation = RequestedOperation::Idle;
-                        }
                     }
+                    operation_request.completeBaseline(generation, valid);
                 }
             }
             if (!current) {
-                resume_tracking_after_baseline = false;
                 apply_state_command(InstrumentCommand::CancelBaseline);
                 {
                     std::lock_guard<std::mutex> lock(telemetry_mutex);
@@ -834,12 +820,10 @@ void acquisition_loop()
                 continue;
             }
             if (!valid) {
-                resume_tracking_after_baseline = false;
                 set_activity(false, false);
                 continue;
             }
-            resume_tracking_after_baseline = false;
-            if (resume) {
+            if (recovery_baseline) {
                 std::lock_guard<std::mutex> lock(telemetry_mutex);
                 telemetry.relock_fallback = false;
                 telemetry.relock_progress = 100.0f;
@@ -980,7 +964,7 @@ void acquisition_loop()
             }
             {
                 std::lock_guard<std::mutex> lock(operation_mutex);
-                if (requested_operation != RequestedOperation::Tracking || operation_generation != generation)
+                if (!operation_request.isCurrent(RequestedOperation::Tracking, generation))
                     continue;
                 publish_tracking(frame, tracking_rate_hz);
                 apply_state_command(frame.degraded ? InstrumentCommand::TrackingPoor : InstrumentCommand::TrackingGood);
@@ -989,7 +973,7 @@ void acquisition_loop()
             if (frame.recovery_required) {
                 {
                     std::lock_guard<std::mutex> lock(operation_mutex);
-                    if (requested_operation != RequestedOperation::Tracking || operation_generation != generation ||
+                    if (!operation_request.isCurrent(RequestedOperation::Tracking, generation) ||
                         !apply_state_command(InstrumentCommand::BeginRelock)) continue;
                 }
                 {
@@ -1027,7 +1011,7 @@ void acquisition_loop()
                 if (relock.success) {
                     {
                         std::lock_guard<std::mutex> lock(operation_mutex);
-                        if (requested_operation != RequestedOperation::Tracking || operation_generation != generation)
+                        if (!operation_request.isCurrent(RequestedOperation::Tracking, generation))
                             continue;
                         apply_state_command(InstrumentCommand::RelockSucceeded);
                     }
@@ -1041,10 +1025,10 @@ void acquisition_loop()
                 } else if (relock.acquisition_error) {
                     {
                         std::lock_guard<std::mutex> lock(operation_mutex);
-                        if (requested_operation != RequestedOperation::Tracking || operation_generation != generation)
+                        if (!operation_request.isCurrent(RequestedOperation::Tracking, generation))
                             continue;
                         apply_state_command(InstrumentCommand::Fail, relock.reason);
-                        requested_operation = RequestedOperation::Idle;
+                        operation_request.complete(RequestedOperation::Tracking, generation);
                     }
                     tracking_active = false;
                     std::lock_guard<std::mutex> lock(telemetry_mutex);
@@ -1056,12 +1040,10 @@ void acquisition_loop()
                     bool scheduled = false;
                     {
                         std::lock_guard<std::mutex> lock(operation_mutex);
-                        if (requested_operation == RequestedOperation::Tracking && operation_generation == generation &&
+                        if (operation_request.isCurrent(RequestedOperation::Tracking, generation) &&
                             apply_state_command(InstrumentCommand::RelockFallback)) {
                             fallback_config = last_baseline.config;
-                            resume_tracking_after_baseline = true;
-                            ++operation_generation;
-                            requested_operation = RequestedOperation::Baseline;
+                            operation_request.requestRecoveryBaseline();
                             scheduled = true;
                         }
                     }
@@ -1220,8 +1202,7 @@ extern "C" int rp_app_init(void)
     tracking_averages.store(1);
     {
         std::lock_guard<std::mutex> lock(operation_mutex);
-        requested_operation = RequestedOperation::Idle;
-        operation_generation = 0;
+        operation_request = OperationRequest{};
     }
     {
         std::lock_guard<std::mutex> state_lock(instrument_state_mutex);

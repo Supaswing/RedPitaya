@@ -320,6 +320,26 @@ calculations or hardware mode.
 
 ## Verification and limits
 
+Manual baseline refresh now resumes an interrupted tracking session using the
+new baseline, independently of the automatic recovery configuration. Host
+`operation_request_test` covers tracking/degraded/relocking refresh, inactive
+baseline completion, cancellation/superseding generations, failed completion,
+early failure, and automatic recovery continuation. `tracker_engine_test`
+also checks that reconfiguration replaces center, spacing, template, and loss
+history before the first resumed three/five-point frame. These host checks do
+not verify target hardware timing or browser behavior.
+
+Validation on 2026-10-19 with MSYS2 UCRT GCC (`-std=c++20 -O2 -Wall -Wextra
+-Wpedantic`): `operation_request_test`, `tracker_engine_test`,
+`instrument_state_test`, `iq_statistics_test`, `fast_relock_test`, and
+`division_free_test` pass. The broader `resonance_analysis_test` fails at line
+159 in `verySparseOverviewUsesLocalProbes` (`result.valid`); rebuilding the
+unmodified HEAD sources reproduces the same failure. No baseline-analysis
+algorithm or test was changed. The existing unused `fitCurvatureFallback`
+warning remains. `git diff --check` passes. Application syntax compilation
+against repository SDK headers is blocked by missing `libjson.h`; the complete
+ARM application build and target/browser checks remain unverified.
+
 [`tracker_engine_test.cpp`](../tests/tracker_engine_test.cpp) covers positive
 shifts in both modes, coherent averaging, threshold decisions, invalid metrics,
 three-frame loss with no center motion, first/expanded relock, rejection,

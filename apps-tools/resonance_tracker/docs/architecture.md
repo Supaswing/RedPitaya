@@ -5,6 +5,19 @@ The equations and acceptance thresholds used by the backend are documented in
 
 ## Control and ownership
 
+Manual baseline acquisition requested during tracking, degraded tracking, or
+local relocking pauses tracking and resumes it after a complete, valid baseline.
+The normal tracking-start path rebuilds centers, templates, derivatives, spacing,
+and quality coefficients from the new baseline; old loss counters are discarded.
+Manual acquisition uses the current baseline settings. Automatic full-baseline
+recovery retains its saved configuration and recovery telemetry.
+
+Continuation intent is stored with the operation request under `operation_mutex`.
+Stop/cancel, failure, or a superseding command clears it, and completion checks
+the operation generation before scheduling tracking. A baseline requested while
+tracking is inactive finishes at `BASELINE_READY`. No transport fields or
+dashboard selection semantics change.
+
 ### Raw-I/Q noise diagnostics
 
 Advanced diagnostics / Raw I/Q publishes four noise metrics for incident,
